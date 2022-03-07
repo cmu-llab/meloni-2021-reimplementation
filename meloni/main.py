@@ -2,7 +2,10 @@ import argparse
 from model import *
 from tqdm import tqdm
 import os
-
+import torch
+import time
+import numpy as np
+import random
 
 MODELPATH_LOSS = f'./checkpoints/{DATASET}_best_loss.pt'
 MODELPATH_ED = f'./checkpoints/{DATASET}_best_ed.pt'
@@ -11,18 +14,120 @@ def get_char_batch(dataset, ipa_vocab, dialect_vocab):
     pass
 
 
+def get_edit_distance(s1, s2):
+    if len(s1) > len(s2):
+        s1, s2 = s2, s1
+    # len(s1) <= len(s2)
+    # TODO: understand
+    distances = range(len(s1) + 1)
+    for i2, c2 in enumerate(s2):
+        distances_ = [i2 + 1]
+        for i1, c1 in enumerate(s1):
+            if c1 == c2:
+                distances_.append(distances[i1])
+            else:
+                distances_.append(1 + min((distances[i1], distances[i1 + 1], distances_[-1])))
+        distances = distances_
+
+    return distances[-1]
+
+
+def train_once(model, optimizer, loss_fn, train_data):
+    model.train()  # https://stackoverflow.com/questions/60018578/what-does-model-eval-do-in-pytorch
+
+    random.shuffle(train_data)
+    good, bad = 0, 0
+    total_train_loss = 0
+    for cognate_set, protoform in train_data:
+        optimizer.zero_grad()
+
+        # TODO: do the C2I in the dataloader
+        # TODO: do the to(device) thingy here
+        # TODO: i don't think masking is needed
+        scores = model(cognate_set, protoform)
+
+        # TODO: get dims right
+
+        loss = loss_fn(scores, protoform)
+        loss.backward()
+        total_train_loss += loss.item()
+
+        optimizer.step()
+
+        # compare indices instead of converting to string
+        predicted = torch.argmax(scores)
+        # TODO: one is list, one is tensor
+        if predicted == protoform:
+            good += 1
+        else:
+            bad += 1
+        # TODO: do we need to calculate train accuracy?
+
+
+    return total_train_loss / len(train_data), good / (good + bad)
+
 def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
-    pass
+    mean_train_losses, mean_dev_losses = np.zeros(epochs), np.zeros(epochs)
+    best_dev_loss, best_dev_edit_distance = 0., 0.
+
+    for epoch in tqdm(range(epochs)):
+        t = time.time()
+
+        train_loss, train_accuracy = train_once(model, optimizer, loss_fn, train_data)
+        dev_loss, edit_distance, dev_accuracy = evaluate(model, loss_fn, dev_data, ipa_vocab, dialect_vocab)
+        print(f'< epoch {epoch} >  (elapsed: {time.time() - t:.2f}s)')
+        print(f'  * [train]  loss: {train_loss:.6f}')
+        dev_result_line = f'  * [ dev ]  loss: {dev_loss:.6f}'
+        if edit_distance is not None:
+            dev_result_line += f'  ||  edit distance: {edit_distance}  ||  accuracy: {dev_accuracy}'
+        print(dev_result_line)
+        if dev_loss < best_dev_loss:
+            best_dev_loss = dev_loss
+            best_loss_epoch = epoch
+            save_model(model, optimizer, args, ipa_vocab, dialect_vocab, epoch, MODELPATH_LOSS)
+        if edit_distance < best_edit_distance:
+            best_edit_distance = edit_distance
+            best_ed_epoch = epoch
+            save_model(model, optimizer, args, ipa_vocab, dialect_vocab, epoch, MODELPATH_ED)
+
+        mean_train_losses[epoch] = train_loss
+        mean_dev_losses[epoch] = dev_loss
+
+    # TODO: be more specific in the naming
+    np.save("losses/train", mean_train_losses)
+    np.save("losses/dev", mean_dev_losses)
 
 
-def evaluate(model, loss_fn, dataset, ipa_vocab, dialect_vocab, return_edit_distance):
+def evaluate(model, loss_fn, dataset, ipa_vocab, dialect_vocab):
     model.eval()
-    total_loss = 0
-    edit_distance = 0
-    n_correct = 0
-    # TODO: revise
 
-    return total_loss, edit_distance, accuracy
+    with torch.no_grad():
+        total_loss = 0
+        edit_distance = 0
+        n_correct = 0
+        # TODO: decide on the input preprocessing
+        for source, dialect, target in get_char_batch(dataset, ipa_vocab, dialect_vocab):
+            # calculate loss
+            # TODO: why does the transformer do one forward pass thru model() and still separately do the encode/decode?
+                # is it to calculate the loss?
+            scores = model(cognate_set, protoform)
+            loss = loss_fn(scores, protoform)
+            total_loss += loss.item()
+
+            # calculate edit distance
+            encoded_state, embedded_x = model.encode(cognate_set, protoform)
+            prediction = model.decode(encoded_state, embedded_x, MAX_LENGTH)
+            # TODO: get the indexing / batching correct
+            edit_distance += get_edit_distance(ipa_vocab.to_string(target[0]), ipa_vocab.to_string(prediction[0]))
+
+            if ipa_vocab.to_string(target[0]) == ipa_vocab.to_string(prediction[0]):
+                n_correct += 1
+
+    accuracy = n_correct / len(dataset)
+    mean_loss = total_loss / len(dataset)
+    mean_edit_distance = edit_distance / len(dataset)
+
+    return mean_loss, mean_edit_distance, accuracy
 
 
 def save_model(model, optimizer, args, ipa_vocab, dialect_vocab, epoch, filepath):
@@ -93,37 +198,39 @@ if __name__ == '__main__':
                   model_type=NETWORK,
                   langs=langs,
                   ).to(DEVICE)
-    # TODO: is this what they are doing?
+    # TODO: is this what Meloni are doing?
     for p in model.parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform_(p)
 
     # does the softmax for you
-    # TODO: does Meloni do padding?
-    loss_fn = torch.nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+    # TODO: does Meloni do padding? ignore_index=PAD_IDX
+    loss_fn = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(),
                                  lr=LEARNING_RATE,
                                  betas=(BETA_1, BETA_2),
                                  eps=1e-9)
 
 
-
     train(NUM_EPOCHS, model, optimizer, loss_fn, train_dataset, dev_dataset)
+
+    # TODO: what is this doing?
     for filepath, criterion in [(MODELPATH_LOSS, 'loss'), (MODELPATH_ED, 'edit distance')]:
         save_info = load_model(filepath)
         saved_info = load_model(filepath)
         args = saved_info['args']
         # TODO: fix
-        model = Model(args.encoder_layers, args.decoder_layers, args.embedding_size,
-                      args.nhead, len(ipa_vocab), len(dialect_vocab), args.dim_feedforward,
-                      args.dropout, MAX_LENGTH).to(DEVICE)
+
+        # TODO: don't forget
         model.load_state_dict(saved_info['model'])
 
         dev_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/dev.pickle')
-        dev_loss, dev_ed, dev_acc = evaluate(model, loss_fn, dev_dataset, ipa_vocab, dialect_vocab, True)
+        dev_loss, dev_ed, dev_acc = evaluate(model, loss_fn, dev_dataset, ipa_vocab, dialect_vocab)
 
         test_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/test.pickle')
-        test_loss, test_ed, test_acc = evaluate(model, loss_fn, test_dataset, ipa_vocab, dialect_vocab, True)
+        test_loss, test_ed, test_acc = evaluate(model, loss_fn, test_dataset, ipa_vocab, dialect_vocab)
+
+        # TODO: remember to calculate normalized edit distance
 
         print(f'===== <FINAL - best {criterion}>  (epoch: {saved_info["epoch"]}) ======')
         print(f'[dev]')
