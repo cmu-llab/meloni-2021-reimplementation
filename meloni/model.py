@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class Encoder(nn.Module):
+class Embedding(nn.Module):
     """Feature extraction:
     Looks up embeddings for a source character and the language,
     concatenates the two,
@@ -18,12 +18,14 @@ class Encoder(nn.Module):
 
     # TODO: use def forward instead?
     def encode(self, char, lang):
+        # TODO: this should be done in the preprocessing
         char_idx = self.C2I[char] if char in self.C2I else self.C2I["<unk>"]
+        # TODO: rename to char embedding
         char_encoded = self.source_embedding(char_idx)
         # TODO: stop doing a linear search - vocab lookup?
         lang_encoded = self.lang_embedding(self.langs.index(lang))
         # TODO: check the dimensions
-        return torch.matmul(self.fc, torch.cat((char_encoded, lang_encode), dim=0))
+        return torch.matmul(self.fc, torch.cat((char_encoded, lang_encoded), dim=0))
 
 
 class MLP(nn.Module):
@@ -88,53 +90,52 @@ class Model(nn.Module):
                  langs):
         # TODO: modularize so we can get dialects for Austronesian, Chinese, or Romance
         # TODO: can we modularize this better?
-        encoder = Encoder(C2I)
+        encoder = Embedding(C2I)
         # one encoder for the proto-language
         # share encoder across all languages
         self.encoders = [encoder for _ in range(len(langs) + 1)]
         # TODO: langs should include the protolang as the last language
         self.langs = langs
+        self.protolang = langs[-1]
         self.l2e = { lang:self.encoders[i] for i, lang in enumerate(self.langs) }
         # separator language
-        self.l2e["sep"] =self.encoders[-1]
+        self.l2e["sep"] = self.encoders[-1]
 
         if model_type == "gru":
             # TODO: beware of batching
             self.encoder_rnn = nn.GRU(input_size=embedding_dim,
                                       hidden_size=model_size,
                                       num_layers=num_layers,
-                                      dropout=dropout)
-            self.decoder_rnn = nn.GRU(input_size=embedding_dim,
+                                      dropout=dropout,
+                                      batch_first=True)
+            self.decoder_rnn = nn.GRU(input_size=embedding_dim + model_size,
                                       hidden_size=model_size,
                                       num_layers=num_layers,
-                                      dropout=dropout)
+                                      dropout=dropout,
+                                      batch_first=True)
         else:
             self.encoder_rnn = nn.LSTM(input_size=embedding_dim,
                                        hidden_size=model_size,
                                        num_layers=num_layers,
-                                       dropout=dropout)
-            self.decoder_rnn = nn.LSTM(input_size=embedding_dim,
+                                       dropout=dropout,
+                                       batch_first=True)
+            self.decoder_rnn = nn.LSTM(input_size=embedding_dim + model_size,
                                        hidden_size=model_size,
                                        num_layers=num_layers,
-                                       dropout=dropout)
+                                       dropout=dropout,
+                                       batch_first=True)
 
         # TODO: shouldn't we share this with the encoder?
         self.lang_embedding = nn.Embedding(len(langs), embedding_dim)
-        self.mlp = MLP(hidden_dim=hidden_dim, feedforward_dim=feedforward_dim, output_size=len(C2I))
+        self.mlp = MLP(hidden_dim=model_size, feedforward_dim=feedforward_dim, output_size=len(C2I))
 
         # TODO: the attention!
-        self.W_query = self.model.add_parameters((lstm_size, lstm_size))
-        self.W_key = self.model.add_parameters((lstm_size, lstm_size))
-        self.W_val = self.model.add_parameters((lstm_size, lstm_size))
-        self.W_att = self.model.add_parameters((1, EMBEDDING_SIZE))
-        self.W_c_s = self.model.add_parameters((lstm_size, EMBEDDING_SIZE))
-        self.W_direct = self.model.add_parameters((len(self.C2I), lstm_size))
-        self.b_att = self.model.add_parameters((lstm_size, 1))
-        self.b_direct = self.model.add_parameters((len(self.C2I), 1))
+        self.attention = Attention(hidden_dim=model_size, embedding_dim=embedding_dim)
 
-    def forward(self, cognate_set):
+    def forward(self, cognate_set, protoform):
         # encoder
         # expects a cognate set mapping city to IPA - OUR. TODO: test on Romance data in our format
+        encoded_cognateset = []
         # for all daughter languages
         for lang in self.langs[:-1]:
             # encodings for separator tokens - TODO: why do we need these?
@@ -150,23 +151,39 @@ class Model(nn.Module):
         # TODO: try seeing what happens if we format the data in a different way - like the transformer
         #  # all_vecs = torch.hstack(encoded_cognateset) = []
 
-        all_vecs = [self.encoders[0].encode("<", "sep")] + vector_sequence + [self.encoders[0].encode(">", "sep")]
-        # TODO: make sure we initialize
-        s = self.encoder_rnn.initial_state()
-        states = s.transduce(all_vecs)
+        # TODO: rename to embedded
+        encoded_cognateset = [self.encoders[0].encode("<", "sep")] + encoded_cognateset + [self.encoders[0].encode(">", "sep")]
+        # TODO: make sure we initialize the state correctly??
+        encoded_cognateset = torch.vstack(encoded_cognateset).to(DEVICE)
 
-        memory =
-
-        # hstack instead of concatenating?
-
-        # encoder-decoder
-        # encoded_state = list of RNN output at each step. HIDDEN_SIZE
-        # encoded_x = list of original embeddings. EMBEDDING_SIZE
-        encoded_state, encoded_x = self.encode(x, y, train=True)
+        # TODO: is the encoder treating each input as separate?
+        (encoder_states, memory) = self.encoder_rnn(encoded_cognateset).to(DEVICE)
+        # TODO: note that the LSTM returns something diff than the GRU
 
         # decoder
 
+        # start of protoform sequence
+        start_encoded = self.l2e["sep"].encode("<s>", "sep")
+        attention_weighted_states = encoder_states[-1]
+        decoder_state = self.decoder_rnn(torch.cat(start_encoded, attention_weighted_states))
+        scores = []  # TODO: it's faster to initialize the shape then fill it in
+
+        for char in protoform:
+            # embedding layer
+            true_char_encoded = self.l2e[self.protolang].encode(char, self.protolang)
+            # MLP to get a probability distribution over the possible output phonemes
+            char_scores = self.mlp(decoder_state + attention_weighted_states)
+            scores.append(char_scores)
+            # dot product attention over the encoder states
+            attention_weighted_states = self.attention(decoder_state, encoder_states, encoded_cognateset)
+            self.decoder_rnn(torch.cat(true_char_encoded, attention_weighted_states))
+
+        return scores
+
 
     def encode(self):
+        pass
         # TODO torch.nograd?
 
+    def decode(self):
+        pass
