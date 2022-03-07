@@ -38,6 +38,7 @@ class MLP(nn.Module):
         self.fc2 = nn.Linear(2 * feedforward_dim, feedforward_dim)
         self.fc3 = nn.Linear(feedforward_dim, output_size, bias=False)
 
+    # TODO: can we switch the last linear layer to a softmax to ensure it's a probability distribution - or makes no diff
     def forward(self, decoder_state):
         h = nn.ReLU(self.fc1(decoder_state))
         scores = self.fc3(nn.ReLU(self.fc2(h)))
@@ -134,6 +135,8 @@ class Model(nn.Module):
 
     def forward(self, cognate_set, protoform):
         # encoder
+
+        # TODO: move this all to the Embedding layer?
         # expects a cognate set mapping city to IPA - OUR. TODO: test on Romance data in our format
         encoded_cognateset = []
         # for all daughter languages
@@ -161,7 +164,6 @@ class Model(nn.Module):
         # TODO: note that the LSTM returns something diff than the GRU
 
         # decoder
-
         # start of protoform sequence
         start_encoded = self.l2e["sep"].encode("<s>", "sep")
         attention_weighted_states = encoder_states[-1]
@@ -176,14 +178,58 @@ class Model(nn.Module):
             scores.append(char_scores)
             # dot product attention over the encoder states
             attention_weighted_states = self.attention(decoder_state, encoder_states, encoded_cognateset)
-            self.decoder_rnn(torch.cat(true_char_encoded, attention_weighted_states))
+            decoder_state = self.decoder_rnn(torch.cat(true_char_encoded, attention_weighted_states))
 
         return scores
 
 
     def encode(self):
-        pass
-        # TODO torch.nograd?
+        # encoder
+        embedded_cognateset = []
+        # for all daughter languages
+        for lang in self.langs[:-1]:
+            # encodings for separator tokens
+            embedded_cognateset.append(self.encoders[0].encode("*", "sep"))
+            embedded_cognateset.append(self.encoders[0].encode(lang, "sep"))
+            embedded_cognateset.append(self.encoders[0].encode(":", "sep"))
 
-    def decode(self):
-        pass
+            # encode each character of the input
+            for daughter_form in cognate_set[lang]:
+                for char in daughter_form:
+                    embedded_cognateset.append(self.encoders[0].encode(char, lang))
+
+        encoded_cognateset = [self.encoders[0].encode("<", "sep")] + embedded_cognateset + [self.encoders[0].encode(">", "sep")]
+        encoded_cognateset = torch.vstack(encoded_cognateset).to(DEVICE)
+
+        (encoder_states, _) = self.encoder_rnn(encoded_cognateset).to(DEVICE)
+        return encoder_states, embedded_cognateset
+
+
+    def decode(self, encoder_states, embedded_cognateset, max_length):
+        # greedy decoding - generate protoform by picking most likely sequence at each time step
+        start_encoded = self.l2e["sep"].encode("<s>", "sep")
+        attention_weighted_states = encoder_states[-1]
+        decoder_state = self.decoder_rnn(torch.cat(start_encoded, attention_weighted_states))
+        reconstruction = []
+
+        i = 0
+        while i < max_length:
+            # embedding layer
+            # MLP to get a probability distribution over the possible output phonemes
+            char_scores = self.mlp(decoder_state + attention_weighted_states)
+            # TODO: make sure it's along the correct dimension
+            predicted_char = torch.argmax(char_scores)
+            predicted_char_encoded = self.l2e[self.protolang].encode(predicted_char, self.protolang)
+
+            # dot product attention over the encoder states
+            attention_weighted_states = self.attention(decoder_state, encoder_states, embedded_cognateset)
+            decoder_state = self.decoder_rnn(torch.cat(predicted_char_encoded, attention_weighted_states))
+
+            reconstruction.append(predicted_char)
+
+            i += 1
+            # end of sequence generated
+            if self.I2C[predicted_char] == ">":
+                break
+
+        return reconstruction
