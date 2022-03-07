@@ -42,6 +42,38 @@ class MLP(nn.Module):
         return scores
 
 
+class Attention(nn.Module):
+    def __init__(self, hidden_dim, embedding_dim):
+        # TODO: batch_first?
+        self.W_query = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.W_key = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.W_val = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.W_att = nn.Linear(embedding_dim, 1)
+        self.W_c_s = nn.Linear(embedding_dim, hidden_dim, bias=False)
+        self.W_direct = nn.Linear(len(self.C2I), hidden_dim)
+
+    def forward(self, query, keys, encoded_input):
+        # query: decoder state
+        # keys: encoder states
+
+        # TODO: why do we need this?
+        query = self.W_query(query)
+        # TODO: get dimensions right
+        scores = torch.matmul(keys, query)
+        # TODO: do the softmax on the correct dimension
+        weights = nn.Softmax(torch.flatten(scores))
+
+        # TODO: do attention analysis and highlight the attention vector
+
+        # weights: L x 1
+        # encoded_input: L x E
+        # keys: L x D
+        # result: L x D - weighted version of the input
+        weighted_states = weights * (self.W_c_s(encoded_input) + self.W_key(keys))
+
+        return weighted_states
+
+
 class Model(nn.Module):
     """
     Encoder-decoder architecture
