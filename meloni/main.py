@@ -1,17 +1,12 @@
 import argparse
 from model import *
 from tqdm import tqdm
-import os
 import torch
 import time
 import numpy as np
 import random
-
-MODELPATH_LOSS = f'./checkpoints/{DATASET}_best_loss.pt'
-MODELPATH_ED = f'./checkpoints/{DATASET}_best_ed.pt'
-
-def get_char_batch(dataset, ipa_vocab, dialect_vocab):
-    pass
+from preprocessing import DataHandler
+import os
 
 
 def get_edit_distance(s1, s2):
@@ -38,17 +33,15 @@ def train_once(model, optimizer, loss_fn, train_data):
     random.shuffle(train_data)
     good, bad = 0, 0
     total_train_loss = 0
-    for cognate_set, protoform in train_data:
+    for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(train_data, langs, C2I, I2C):
         optimizer.zero_grad()
 
-        # TODO: do the C2I in the dataloader
         # TODO: do the to(device) thingy here
-        # TODO: i don't think masking is needed
-        scores = model(cognate_set, protoform)
+        scores = model(daughter_forms, protoform)
 
-        # TODO: get dims right
-
-        loss = loss_fn(scores, protoform)
+        # TODO: get dims right - reshape as needed
+        # TODO: map the protoform directly to a tensor of indices?? (protoform is still a list of tuples
+        loss = loss_fn(scores, protoform_tensor)
         loss.backward()
         total_train_loss += loss.item()
 
@@ -61,13 +54,13 @@ def train_once(model, optimizer, loss_fn, train_data):
             good += 1
         else:
             bad += 1
-        # TODO: do we need to calculate train accuracy?
-
 
     return total_train_loss / len(train_data), good / (good + bad)
 
+
 def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
     mean_train_losses, mean_dev_losses = np.zeros(epochs), np.zeros(epochs)
+    best_loss_epoch, best_ed_epoch = 0, 0
     best_dev_loss, best_dev_edit_distance = 0., 0.
 
     for epoch in tqdm(range(epochs)):
@@ -96,29 +89,52 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
     # TODO: be more specific in the naming
     np.save("losses/train", mean_train_losses)
     np.save("losses/dev", mean_dev_losses)
+    record(best_loss_epoch, best_dev_loss, best_ed_epoch, best_edit_distance)
 
 
-def evaluate(model, loss_fn, dataset, ipa_vocab, dialect_vocab):
+def record(best_loss_epoch, best_loss, best_ed_epoch, edit_distance):
+    with open(f'./results/exp_{EXP_NUM}_params.txt', 'w') as fout:
+        # TODO: update!!
+        params = {'exp_num': EXP_NUM,
+                  'lr': LEARNING_RATE,
+                  'beta1': BETA_1,
+                  'beta2': BETA_2,
+                  'num_encoder_layers': NUM_ENCODER_LAYERS,
+                  'num_decoder_layers': NUM_DECODER_LAYERS,
+                  'embedding_size': EMBEDDING_SIZE,
+                  'nhead': NHEAD,
+                  'dim_feedforward': DIM_FEEDFORWARD,
+                  'dropout': DROPOUT,
+                  'weight_decay': WEIGHT_DECAY,
+                  'epochs': NUM_EPOCHS,
+                  'warmup_epochs': WARMUP_EPOCHS}
+        for k, v in params.items():
+            fout.write(f'{k}: {v}\n')
+    with open('./results/metrics.txt', 'a') as fout:
+        fout.write(f'{EXP_NUM}. loss: {best_loss} ({best_loss_epoch})   ||   {edit_distance} ({best_ed_epoch})\n')
+
+
+def evaluate(model, loss_fn, dataset):
     model.eval()
 
     with torch.no_grad():
         total_loss = 0
         edit_distance = 0
         n_correct = 0
-        # TODO: decide on the input preprocessing
-        for source, dialect, target in get_char_batch(dataset, ipa_vocab, dialect_vocab):
+        for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(dataset, langs, C2I):
             # calculate loss
-            # TODO: why does the transformer do one forward pass thru model() and still separately do the encode/decode?
-                # is it to calculate the loss?
-            scores = model(cognate_set, protoform)
+            scores = model(daughter_forms, protoform)
             loss = loss_fn(scores, protoform)
             total_loss += loss.item()
 
             # calculate edit distance
-            encoded_state, embedded_x = model.encode(cognate_set, protoform)
-            prediction = model.decode(encoded_state, embedded_x, MAX_LENGTH)
+            # necessary to have a separate encode and decode because we are doing greedy decoding here
+            #   instead of comparing against the protoform
+            (encoder_states, memory), embedded_x = model.encode(daughter_forms, protoform)
+            prediction = model.decode(encoder_states, memory, embedded_x, MAX_LENGTH)
             # TODO: get the indexing / batching correct
-            edit_distance += get_edit_distance(ipa_vocab.to_string(target[0]), ipa_vocab.to_string(prediction[0]))
+            # TODO: make a to_string function - or just use the vocab
+            edit_distance += get_edit_distance(ipa_vocab.to_string(target[0]), ipa_vocab.to_string(protoform_tensor))
 
             if ipa_vocab.to_string(target[0]) == ipa_vocab.to_string(prediction[0]):
                 n_correct += 1
@@ -152,43 +168,58 @@ def load_model(filepath):
 if __name__ == '__main__':
     torch.manual_seed(0)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, required=True, help='chinese/romance/austronesian')
+    parser.add_argument('--dataset', type=str, required=True, help='chinese/romance_orthographic/romance_phonetic/austronesian')
     parser.add_argument('--network', type=str, required=True, help='lstm/gru')
-    parser.add_argument('--num_layers', type=float, required=True, help='number of RNN layers')
+    parser.add_argument('--num_layers', type=int, required=True, help='number of RNN layers')
     parser.add_argument('--model_size', type=int, required=True, help='lstm hidden layer size')
     parser.add_argument('--lr', type=float, required=True, help='learning rate')
     parser.add_argument('--beta1', type=float, required=True, help='beta1')
     parser.add_argument('--beta2', type=float, required=True, help='beta2')
+    parser.add_argument('--eps', type=float, required=True, help='eps')
     parser.add_argument('--embedding_size', type=int, required=True, help='embedding size')
     parser.add_argument('--feedforward_dim', type=int, required=True, help='dimension of the final MLP')
     parser.add_argument('--dropout', type=float, required=True, help='dropout value')
     parser.add_argument('--epochs', type=int, required=True)
-    # TODO: batch size
+    # TODO: batching
     parser.add_argument('--batch_size', type=int, required=True, help='batch_size')
+    args = parser.parse_args()
 
-    TQDM_DISABLE = True
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     NUM_EPOCHS = args.epochs
     DATASET = args.dataset
     NUM_LAYERS = args.num_layers
     NETWORK = args.network
+    MODELPATH_LOSS = f'./checkpoints/{DATASET}_best_loss.pt'
+    MODELPATH_ED = f'./checkpoints/{DATASET}_best_ed.pt'
 
     LEARNING_RATE = args.lr
     BETA_1 = args.beta1
     BETA_2 = args.beta2
+    EPS = args.eps
     EMBEDDING_SIZE = args.embedding_size
     DROPOUT = args.dropout
     MAX_LENGTH = 30 if 'romance' in DATASET else 15
     HIDDEN_SIZE = args.model_size
     FEEDFORWARD_DIM = args.feedforward_dim
 
-    train_dataset, dev_dataset, test_dataset = DataHandler.get_datasets(args.dataset)
-    # TODO: use our vocab class
-    # TODO: use terms like dialect vocab or something
-    # TODO: grab the language list
-    letters, C2I, I2C = utils.create_voc(args.dataset)
+    train_dataset, phoneme_vocab, langs = DataHandler.load_dataset(f'./data/{DATASET}/train.pickle')
+    dev_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/dev.pickle')
+    # special tokens in the separator embedding's vocabulary
+    # TODO: create a special vocab just for the separator embeddings
+    phoneme_vocab.add("<")
+    phoneme_vocab.add(":")
+    phoneme_vocab.add("*")
+    phoneme_vocab.add(">")
+    phoneme_vocab.add("<unk>")
+    phoneme_vocab.add("-")
+    phoneme_vocab.add("<s>")
+    # treat each language as a token since each language will be included in the input sequence
+    for lang in langs:
+        phoneme_vocab.add(lang)
+    C2I = {c: i for i, c in enumerate(sorted(phoneme_vocab))}
+    C2I = defaultdict(lambda: '<unk>', C2I)
+    I2C = {i: c for i, c in enumerate(sorted(phoneme_vocab))}
 
-    # encoder for the separator
     model = Model(C2I, I2C,
                   num_layers=NUM_LAYERS,
                   dropout=DROPOUT,
@@ -201,37 +232,44 @@ if __name__ == '__main__':
     # TODO: is this what Meloni are doing?
     for p in model.parameters():
         if p.dim() > 1:
-            nn.init.xavier_uniform_(p)
+            torch.nn.init.xavier_uniform_(p)
 
     # does the softmax for you
-    # TODO: does Meloni do padding? ignore_index=PAD_IDX
     loss_fn = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(),
                                  lr=LEARNING_RATE,
                                  betas=(BETA_1, BETA_2),
-                                 eps=1e-9)
-
+                                 eps=EPS)
 
     train(NUM_EPOCHS, model, optimizer, loss_fn, train_dataset, dev_dataset)
 
-    # TODO: what is this doing?
+    if not os.path.isdir('checkpoints'):
+        os.mkdir('checkpoints')
+    # evaluate on the model with the best loss and the one with the best edit distance
     for filepath, criterion in [(MODELPATH_LOSS, 'loss'), (MODELPATH_ED, 'edit distance')]:
-        save_info = load_model(filepath)
         saved_info = load_model(filepath)
         args = saved_info['args']
-        # TODO: fix
 
-        # TODO: don't forget
+        ipa_vocab = saved_info['ipa_vocab']
+        dialect_vocab = saved_info['dialect_vocab']
+        model = Model(C2I, I2C,
+                      num_layers=NUM_LAYERS,
+                      dropout=DROPOUT,
+                      feedforward_dim=FEEDFORWARD_DIM,
+                      embedding_dim=EMBEDDING_SIZE,
+                      model_size=HIDDEN_SIZE,
+                      model_type=NETWORK,
+                      langs=langs,
+                      ).to(DEVICE)
         model.load_state_dict(saved_info['model'])
 
-        dev_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/dev.pickle')
-        dev_loss, dev_ed, dev_acc = evaluate(model, loss_fn, dev_dataset, ipa_vocab, dialect_vocab)
-
         test_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/test.pickle')
+        dev_loss, dev_ed, dev_acc = evaluate(model, loss_fn, dev_dataset, ipa_vocab, dialect_vocab)
         test_loss, test_ed, test_acc = evaluate(model, loss_fn, test_dataset, ipa_vocab, dialect_vocab)
 
-        # TODO: remember to calculate normalized edit distance
+        # TODO: print the predictions
 
+        # TODO: remember to calculate normalized edit distance
         print(f'===== <FINAL - best {criterion}>  (epoch: {saved_info["epoch"]}) ======')
         print(f'[dev]')
         print(f'  * loss: {dev_loss}')
@@ -244,5 +282,3 @@ if __name__ == '__main__':
         print(f'  * accuracy: {test_acc}')
 
 # TODO: make directories if they do not exist
-
-
