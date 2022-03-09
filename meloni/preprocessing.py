@@ -4,6 +4,8 @@ import sys
 import random
 import pickle
 import argparse
+from collections import defaultdict
+import torch
 
 
 random.seed(1234)
@@ -13,13 +15,17 @@ class DataHandler:
     """
     Data format:
     ex: { 'pi:num':
-            {'protoform': ['p', 'i', 'n', 'ʊ', 'm'],
+            {'protoform':
+                {
+                'Latin': ['p', 'i', 'n', 'ʊ', 'm']
+                },
             'daughters':
-                [('Romanian', ['p', 'i', 'n']),
-                ('French', ['p', 'ɛ', '̃']),
-                ('Italian', ['p', 'i', 'n', 'o']),
-                ('Spanish', ['p', 'i', 'n', 'o']),
-                ('Portuguese', ['p', 'i', 'ɲ', 'ʊ'])]
+                {'Romanian': ['p', 'i', 'n'],
+                 'French': ['p', 'ɛ', '̃'],
+                 'Italian': ['p', 'i', 'n', 'o'],
+                 'Spanish': ['p', 'i', 'n', 'o'],
+                 'Portuguese': ['p', 'i', 'ɲ', 'ʊ']
+                }
             },
         ...
         }
@@ -92,37 +98,41 @@ class DataHandler:
     def tokenize(self, string):
         return list(string)
 
-    def generate_groupwise_dataset(self):
+    def generate_split_datasets(self):
         split_ratio = (70, 10, 20)  # train, dev, test
         langs, data = self._read_tsv(f'./data/{self._dataset_name}.tsv')
+        protolang = langs[0]
         cognate_set = {}
-        for character, tkn_list in data.items():
+        for cognate, tkn_list in data.items():
             entry = {}
+            daughter_sequences = {}
             if "chinese" in self._dataset_name:
                 mc_string, mc_tone = self._clean_middle_chinese_string(tkn_list[0])
                 mc_tkns = self.sinitic_tokenize(mc_string, merge_diacritics=False)
-                daughter_sequences = []
                 for dialect, tkn in zip(langs[1:], tkn_list[1:]):
                     if not tkn or tkn == '-':
                         continue
                     daughter_string, daughter_tone = self._clean_sinitic_daughter_string(tkn)
                     daughter_tkns = self.sinitic_tokenize(daughter_string, merge_diacritics=False)
-                    daughter_sequences.append((dialect, daughter_tkns))
-                entry['protoform'] = mc_tkns
+                    daughter_sequences[dialect] = daughter_tkns
+                entry['protoform'] = {
+                    protolang: mc_tkns
+                }
                 entry['daughters'] = daughter_sequences
-                cognate_set[character] = entry
+                cognate_set[cognate] = entry
             else:
-                daughter_sequences = []
-                protolang_tkns = self.tokenize(character)
+                protolang_tkns = self.tokenize(cognate)
                 for lang, tkn in zip(langs[1:], tkn_list):
                     if not tkn or tkn == '-':
                         continue
                     daughter_tkns = self.tokenize(tkn)
-                    daughter_sequences.append((lang, daughter_tkns))
+                    daughter_sequences[lang] = daughter_tkns
 
-                entry['protoform'] = protolang_tkns
+                entry['protoform'] = {
+                    protolang: protolang_tkns
+                }
                 entry['daughters'] = daughter_sequences
-                cognate_set[character] = entry
+                cognate_set[cognate] = entry
 
         dataset = {}
         proto_words = list(cognate_set.keys())
@@ -137,31 +147,63 @@ class DataHandler:
         for data_type in dataset:
             subdata = {protoword: cognate_set[protoword] for protoword in dataset[data_type]}
             with open(f'./data/{self._dataset_name}/{data_type}.pickle', 'wb') as fout:
-                pickle.dump(subdata, fout)
+                pickle.dump((langs, subdata), fout)
 
     @classmethod
     def load_dataset(cls, fpath):
         vocab = set()  # set of possible phonemes in the daughters and the protoform
-        langs = set()
         with open(fpath, 'rb') as fin:
-            data = pickle.load(fin)
-            for char, entry in data.items():
-                target = entry['protoform']
-                vocab.update(target)
-                for lang, source in entry['daughters']:
+            (langs, data) = pickle.load(fin)
+            # list format enables shuffling
+            dataset = []
+            for cognate, entry in data.items():
+                for lang, target in entry['protoform'].items():
+                    vocab.update(target)
+                for lang, source in entry['daughters'].items():
                     vocab.update(source)
-                    langs.add(lang)
-        return data, vocab, langs
+                dataset.append((cognate, entry))
 
-    # TODO: ablation
+        return dataset, vocab, langs
 
     @classmethod
-    def create_voc(cls):
-        # TODO
-        pass
+    def get_cognateset_batch(cls, dataset, langs, C2I, I2C):
+        """
+        Convert both the daughter and protoform character lists to indices in the vocab
+        """
+        protolang = langs[0]
+        for cognate, entry in dataset:
+            # 1. convert the chars to indices
+            # 2. then zip with the lang - List of (lang, index tensor)
+            # 3. in the Embedding layer, add the BOS/EOS and the separator embeddings and do the language and char embeddings
+            # the languages are supplied so the model knows what language embedding to apply
+            target_batch = [('sep', C2I["<"])] + \
+                [(protolang, C2I[char if char in C2I else "<unk>"]) for char in entry["protoform"][protolang]] + \
+                [('sep', C2I[">"])]
 
-    def get_cognateset_batch(self):
-        pass
+            # example cognate set
+            #      <*French:croître*Italian:crescere*Spanish:crecer*Portuguese:crecer*Romanian:crește*>
+            # note that the languages will be treated as one token
+
+            # start of sequence
+            source_batch = [('sep', C2I["<"])]
+            for lang in langs[1:]:
+                source_index_sequence = [('sep', C2I['*']), ('sep', C2I[lang]), ('sep', C2I[':'])]
+                # incomplete cognate set
+                if lang not in entry['daughters']:
+                    source_index_sequence.append((lang, C2I['-']))
+                else:
+                    raw_source_sequence = entry['daughters'][lang]
+                    # note: C2I will recognize each language's name as a token, so it will not go to UNK
+                    source_index_sequence += [(lang, C2I[char if char in C2I else "<unk>"])
+                                              for char in raw_source_sequence]
+                source_batch += source_index_sequence
+            source_batch.append(('sep', C2I["*"]))
+            # end of sequence
+            source_batch.append(('sep', C2I[">"]))
+
+            # used when calculating the loss
+            target_tensor = torch.tensor([idx for _, idx in target_batch])
+            yield source_batch, target_batch, target_tensor
 
 
 if __name__ == '__main__':
@@ -170,4 +212,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     d = DataHandler(args.dataset)
-    d.generate_groupwise_dataset()
+    d.generate_split_datasets()
