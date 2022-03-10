@@ -64,7 +64,7 @@ class Attention(nn.Module):
         # scores: [1, L, 1]
         scores = torch.matmul(keys, query.transpose(1, 2))
         # TODO: do the softmax on the correct dimension
-        # softmax to get a probability distribution over encoder states
+        # softmax to get a probability distribution over the L encoder states
         weights = f.softmax(scores, dim=-2)
 
         # TODO: do attention analysis and highlight the attention vector
@@ -72,9 +72,9 @@ class Attention(nn.Module):
         # weights: L x 1
         # encoded_input: L x E
         # keys: L x D
-        # result: L x D - weighted version of the input
-        # TODO: this is wrong!! result should be 1 x D
+        # result: 1 x D - weighted version of the input
         weighted_states = weights * (self.W_c_s(encoded_input) + self.W_key(keys))
+        weighted_states = weighted_states.sum(dim=-2)
 
         return weighted_states
 
@@ -165,13 +165,14 @@ class Model(nn.Module):
             true_char_embedded = self.l2e[self.protolang](char, lang)
             # MLP to get a probability distribution over the possible output phonemes
             char_scores = self.mlp(decoder_state + attention_weighted_states)
-            scores.append(char_scores)
+            scores.append(char_scores.squeeze(dim=0))
             # dot product attention over the encoder states
             attention_weighted_states = self.attention(decoder_state, encoder_states, embedded_cognateset)
             decoder_input = torch.cat((true_char_embedded, attention_weighted_states), dim=1).unsqueeze(dim=0)
             # TODO: make sure that we're really taking the decoder state
             decoder_state, _ = self.decoder_rnn(decoder_input)
 
+        # |T| elem list with (1, |Y|) -> (T, |Y|)
         scores = torch.vstack(scores)
         return scores
 

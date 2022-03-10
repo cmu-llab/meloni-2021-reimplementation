@@ -205,6 +205,13 @@ class DataHandler:
             target_tensor = torch.tensor([idx for _, idx in target_batch])
             yield source_batch, target_batch, target_tensor
 
+    # TODO: just use the vocab class from the transformer
+    @classmethod
+    def to_string(cls, I2C, indices):
+        str = ''
+        for idx in indices:
+            str += I2C[idx]
+        return str
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

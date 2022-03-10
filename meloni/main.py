@@ -37,18 +37,21 @@ def train_once(model, optimizer, loss_fn, train_data):
         optimizer.zero_grad()
 
         # TODO: do the to(device) thingy here
-        scores = model(daughter_forms, protoform)
+        logits = model(daughter_forms, protoform)
+        # logits should be (1, T, |Y|)
 
-        # TODO: get dims right - reshape as needed
-        # TODO: map the protoform directly to a tensor of indices?? (protoform is still a list of tuples
-        loss = loss_fn(scores, protoform_tensor)
+        # reshape logits to (T, |Y|) - remove batch dim for now
+        # protoform_tensor: (T,)
+        loss = loss_fn(logits, protoform_tensor)
         loss.backward()
         total_train_loss += loss.item()
 
         optimizer.step()
 
+        # TODO: check dimensions for everything!
+
         # compare indices instead of converting to string
-        predicted = torch.argmax(scores)
+        predicted = torch.argmax(logits, dim=1)
         # TODO: one is list, one is tensor
         if predicted == protoform:
             good += 1
@@ -93,25 +96,27 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
 
 
 def record(best_loss_epoch, best_loss, best_ed_epoch, edit_distance):
-    with open(f'./results/exp_{EXP_NUM}_params.txt', 'w') as fout:
-        # TODO: update!!
-        params = {'exp_num': EXP_NUM,
+    if not os.path.isdir('results'):
+        os.mkdir('results')
+    if not os.path.isdir('results/' + DATASET):
+        os.mkdir('results/' + DATASET)
+    with open(f'./results/{DATASET}/params.txt', 'w') as fout:
+        params = {'network': NETWORK,
+                  'num_layers': NUM_LAYERS,
+                  'model_size': HIDDEN_SIZE,
                   'lr': LEARNING_RATE,
                   'beta1': BETA_1,
                   'beta2': BETA_2,
-                  'num_encoder_layers': NUM_ENCODER_LAYERS,
-                  'num_decoder_layers': NUM_DECODER_LAYERS,
+                  'eps': EPS,
                   'embedding_size': EMBEDDING_SIZE,
-                  'nhead': NHEAD,
-                  'dim_feedforward': DIM_FEEDFORWARD,
+                  'feedforward_dim': FEEDFORWARD_DIM,
                   'dropout': DROPOUT,
-                  'weight_decay': WEIGHT_DECAY,
                   'epochs': NUM_EPOCHS,
-                  'warmup_epochs': WARMUP_EPOCHS}
+                  'batch_size': 1}
         for k, v in params.items():
             fout.write(f'{k}: {v}\n')
-    with open('./results/metrics.txt', 'a') as fout:
-        fout.write(f'{EXP_NUM}. loss: {best_loss} ({best_loss_epoch})   ||   {edit_distance} ({best_ed_epoch})\n')
+    with open(f'./results/{DATASET}/metrics.txt', 'a') as fout:
+        fout.write(f'{DATASET}. loss: {best_loss} ({best_loss_epoch})   ||   {edit_distance} ({best_ed_epoch})\n')
 
 
 def evaluate(model, loss_fn, dataset):
@@ -123,8 +128,8 @@ def evaluate(model, loss_fn, dataset):
         n_correct = 0
         for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(dataset, langs, C2I):
             # calculate loss
-            scores = model(daughter_forms, protoform)
-            loss = loss_fn(scores, protoform)
+            logits = model(daughter_forms, protoform_tensor)
+            loss = loss_fn(logits, protoform_tensor)
             total_loss += loss.item()
 
             # calculate edit distance
@@ -134,9 +139,10 @@ def evaluate(model, loss_fn, dataset):
             prediction = model.decode(encoder_states, memory, embedded_x, MAX_LENGTH)
             # TODO: get the indexing / batching correct
             # TODO: make a to_string function - or just use the vocab
-            edit_distance += get_edit_distance(ipa_vocab.to_string(target[0]), ipa_vocab.to_string(protoform_tensor))
 
-            if ipa_vocab.to_string(target[0]) == ipa_vocab.to_string(prediction[0]):
+            predict_str, protoform_str = DataHandler.to_string(prediction[0]), DataHandler.to_string(protoform_tensor)
+            edit_distance += get_edit_distance(predict_str, protoform_str)
+            if predict_str == protoform_str:
                 n_correct += 1
 
     accuracy = n_correct / len(dataset)
