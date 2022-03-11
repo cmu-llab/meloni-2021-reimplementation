@@ -138,16 +138,16 @@ class Model(nn.Module):
         self.mlp = MLP(hidden_dim=model_size, feedforward_dim=feedforward_dim, output_size=len(C2I))
         self.attention = Attention(hidden_dim=model_size, embedding_dim=embedding_dim)
 
-    def forward(self, daughter_forms, protoform):
+    def forward(self, daughter_forms, protoform, device):
         # encoder
         # TODO: is the encoder treating each input as separate?
         # encoder_states: 1 x L x H, memory: 1 x 1 x H, where L = len(daughter_forms)
-        (encoder_states, memory), embedded_cognateset = self.encode(daughter_forms)
+        (encoder_states, memory), embedded_cognateset = self.encode(daughter_forms, device)
 
         # decoder
         # start of protoform sequence
         # TODO: is this really necessary? we already have < and > serving as BOS/EOS
-        start_encoded = self.l2e["sep"](self.C2I["<s>"], "sep")
+        start_encoded = self.l2e["sep"](self.C2I["<s>"], "sep").to(device)
         # initalize weighted states to the final encoder state
         # TODO: there has to be a better way of doing this indexing - preserve batch dim
         attention_weighted_states = memory.squeeze(dim=0)
@@ -162,7 +162,7 @@ class Model(nn.Module):
         for lang, char in protoform:
             # lang will either be sep or the protolang
             # embedding layer
-            true_char_embedded = self.l2e[self.protolang](char, lang)
+            true_char_embedded = self.l2e[self.protolang](char, lang).to(device)
             # MLP to get a probability distribution over the possible output phonemes
             char_scores = self.mlp(decoder_state + attention_weighted_states)
             scores.append(char_scores.squeeze(dim=0))
@@ -176,7 +176,7 @@ class Model(nn.Module):
         scores = torch.vstack(scores)
         return scores
 
-    def encode(self, daughter_forms):
+    def encode(self, daughter_forms, device):
         # daughter_forms: list of lang and indices in the vocab
         embedded_cognateset = []
         for lang, idx in daughter_forms:
@@ -184,7 +184,7 @@ class Model(nn.Module):
             # shared for all languages (including the protolanguage), but separators have their own
             embedded_cognateset.append(self.l2e[lang](idx, lang))
 
-        embedded_cognateset = torch.vstack(embedded_cognateset) # .to(DEVICE)
+        embedded_cognateset = torch.vstack(embedded_cognateset).to(device)
         # [1, C, E], batch size of 1, C = len(daughter_forms)
         embedded_cognateset = embedded_cognateset.unsqueeze(dim=0)
 

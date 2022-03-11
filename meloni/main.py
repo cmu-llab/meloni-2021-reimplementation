@@ -33,11 +33,11 @@ def train_once(model, optimizer, loss_fn, train_data):
     random.shuffle(train_data)
     good, bad = 0, 0
     total_train_loss = 0
-    for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(train_data, langs, C2I, I2C):
+    for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(train_data, langs, C2I, DEVICE):
         optimizer.zero_grad()
 
         # TODO: do the to(device) thingy here
-        logits = model(daughter_forms, protoform)
+        logits = model(daughter_forms, protoform, DEVICE)
         # logits should be (1, T, |Y|)
 
         # reshape logits to (T, |Y|) - remove batch dim for now
@@ -70,7 +70,7 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
         t = time.time()
 
         train_loss, train_accuracy = train_once(model, optimizer, loss_fn, train_data)
-        dev_loss, edit_distance, dev_accuracy = evaluate(model, loss_fn, dev_data, ipa_vocab, dialect_vocab)
+        dev_loss, edit_distance, dev_accuracy = evaluate(model, loss_fn, dev_data)
         print(f'< epoch {epoch} >  (elapsed: {time.time() - t:.2f}s)')
         print(f'  * [train]  loss: {train_loss:.6f}')
         dev_result_line = f'  * [ dev ]  loss: {dev_loss:.6f}'
@@ -80,11 +80,11 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
         if dev_loss < best_dev_loss:
             best_dev_loss = dev_loss
             best_loss_epoch = epoch
-            save_model(model, optimizer, args, ipa_vocab, dialect_vocab, epoch, MODELPATH_LOSS)
+            save_model(model, optimizer, args, epoch, MODELPATH_LOSS)
         if edit_distance < best_edit_distance:
             best_edit_distance = edit_distance
             best_ed_epoch = epoch
-            save_model(model, optimizer, args, ipa_vocab, dialect_vocab, epoch, MODELPATH_ED)
+            save_model(model, optimizer, args, epoch, MODELPATH_ED)
 
         mean_train_losses[epoch] = train_loss
         mean_dev_losses[epoch] = dev_loss
@@ -126,9 +126,9 @@ def evaluate(model, loss_fn, dataset):
         total_loss = 0
         edit_distance = 0
         n_correct = 0
-        for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(dataset, langs, C2I):
+        for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(dataset, langs, C2I, DEVICE):
             # calculate loss
-            logits = model(daughter_forms, protoform_tensor)
+            logits = model(daughter_forms, protoform_tensor, DEVICE)
             loss = loss_fn(logits, protoform_tensor)
             total_loss += loss.item()
 
@@ -152,15 +152,14 @@ def evaluate(model, loss_fn, dataset):
     return mean_loss, mean_edit_distance, accuracy
 
 
-def save_model(model, optimizer, args, ipa_vocab, dialect_vocab, epoch, filepath):
+def save_model(model, optimizer, args, epoch, filepath):
     # TODO: store the vocabulary in the RNN Meloni format
     save_info = {
         'model': model.state_dict(),
         'optim': optimizer.state_dict(),
         'args': args,
         'epoch': epoch,
-        'ipa_vocab': ipa_vocab,
-        'dialect_vocab': dialect_vocab
+        'C2I': C2I,
     }
     torch.save(save_info, filepath)
     print(f'\t>> saved model to {filepath}')
@@ -256,8 +255,6 @@ if __name__ == '__main__':
         saved_info = load_model(filepath)
         args = saved_info['args']
 
-        ipa_vocab = saved_info['ipa_vocab']
-        dialect_vocab = saved_info['dialect_vocab']
         model = Model(C2I, I2C,
                       num_layers=NUM_LAYERS,
                       dropout=DROPOUT,
@@ -270,8 +267,8 @@ if __name__ == '__main__':
         model.load_state_dict(saved_info['model'])
 
         test_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/test.pickle')
-        dev_loss, dev_ed, dev_acc = evaluate(model, loss_fn, dev_dataset, ipa_vocab, dialect_vocab)
-        test_loss, test_ed, test_acc = evaluate(model, loss_fn, test_dataset, ipa_vocab, dialect_vocab)
+        dev_loss, dev_ed, dev_acc = evaluate(model, loss_fn, dev_dataset)
+        test_loss, test_ed, test_acc = evaluate(model, loss_fn, test_dataset)
 
         # TODO: print the predictions
 

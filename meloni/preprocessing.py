@@ -166,7 +166,7 @@ class DataHandler:
         return dataset, vocab, langs
 
     @classmethod
-    def get_cognateset_batch(cls, dataset, langs, C2I, I2C):
+    def get_cognateset_batch(cls, dataset, langs, C2I, device):
         """
         Convert both the daughter and protoform character lists to indices in the vocab
         """
@@ -202,7 +202,7 @@ class DataHandler:
             source_batch.append(('sep', C2I[">"]))
 
             # used when calculating the loss
-            target_tensor = torch.tensor([idx for _, idx in target_batch])
+            target_tensor = torch.tensor([idx for _, idx in target_batch]).to(device)
             yield source_batch, target_batch, target_tensor
 
     # TODO: just use the vocab class from the transformer
