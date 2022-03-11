@@ -128,17 +128,16 @@ def evaluate(model, loss_fn, dataset):
         n_correct = 0
         for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(dataset, langs, C2I, DEVICE):
             # calculate loss
-            logits = model(daughter_forms, protoform_tensor, DEVICE)
+            logits = model(daughter_forms, protoform, DEVICE)
             loss = loss_fn(logits, protoform_tensor)
             total_loss += loss.item()
 
             # calculate edit distance
             # necessary to have a separate encode and decode because we are doing greedy decoding here
             #   instead of comparing against the protoform
-            (encoder_states, memory), embedded_x = model.encode(daughter_forms, protoform)
-            prediction = model.decode(encoder_states, memory, embedded_x, MAX_LENGTH)
+            (encoder_states, memory), embedded_x = model.encode(daughter_forms, DEVICE)
+            prediction = model.decode(encoder_states, memory, embedded_x, MAX_LENGTH, DEVICE)
             # TODO: get the indexing / batching correct
-            # TODO: make a to_string function - or just use the vocab
 
             predict_str, protoform_str = DataHandler.to_string(prediction[0]), DataHandler.to_string(protoform_tensor)
             edit_distance += get_edit_distance(predict_str, protoform_str)

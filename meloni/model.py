@@ -188,20 +188,19 @@ class Model(nn.Module):
         # [1, C, E], batch size of 1, C = len(daughter_forms)
         embedded_cognateset = embedded_cognateset.unsqueeze(dim=0)
 
-        # TODO: to(device)?
         # TODO: note that the LSTM returns something diff than the GRU in pytorch
         return self.encoder_rnn(embedded_cognateset), embedded_cognateset
 
-    def decode(self, encoder_states, memory, embedded_cognateset, max_length):
+    def decode(self, encoder_states, memory, embedded_cognateset, max_length, device):
         # greedy decoding - generate protoform by picking most likely sequence at each time step
-        start_encoded = self.l2e["sep"](self.C2I["<s>"], "sep")
+        start_encoded = self.l2e["sep"](self.C2I["<s>"], "sep").to(device)
         # initalize weighted states to the final encoder state
         # TODO: there has to be a better way of doing this indexing - preserve batch dim
         attention_weighted_states = memory.squeeze(dim=0)
         # start_encoded: 1 x E, attention_weighted_states: 1 x H
         # concatenated into 1 x (H + E)
         decoder_input = torch.cat((start_encoded, attention_weighted_states), dim=1).unsqueeze(dim=0)
-        decoder_state = self.decoder_rnn(decoder_input)
+        decoder_state, _ = self.decoder_rnn(decoder_input)
         reconstruction = []
 
         i = 0
@@ -210,12 +209,14 @@ class Model(nn.Module):
             # MLP to get a probability distribution over the possible output phonemes
             char_scores = self.mlp(decoder_state + attention_weighted_states)
             # TODO: make sure it's along the correct dimension
-            predicted_char = torch.argmax(char_scores)
+            # char_scores: [1, 1, |Y|]
+            predicted_char = torch.argmax(char_scores.squeeze(dim=0)).item()
             predicted_char_encoded = self.l2e[self.protolang](predicted_char, self.protolang)
 
             # dot product attention over the encoder states
             attention_weighted_states = self.attention(decoder_state, encoder_states, embedded_cognateset)
-            decoder_state = self.decoder_rnn(torch.cat(predicted_char_encoded, attention_weighted_states))
+            decoder_input = torch.cat((predicted_char_encoded, attention_weighted_states), dim=1).unsqueeze(dim=0)
+            decoder_state, _ = self.decoder_rnn(decoder_input)
 
             reconstruction.append(predicted_char)
 
