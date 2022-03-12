@@ -211,7 +211,7 @@ class Model(nn.Module):
             # TODO: make sure it's along the correct dimension
             # char_scores: [1, 1, |Y|]
             predicted_char = torch.argmax(char_scores.squeeze(dim=0)).item()
-            predicted_char_encoded = self.l2e[self.protolang](predicted_char, self.protolang)
+            predicted_char_encoded = self.l2e[self.protolang](predicted_char, self.protolang).to(device)
 
             # dot product attention over the encoder states
             attention_weighted_states = self.attention(decoder_state, encoder_states, embedded_cognateset)

@@ -64,7 +64,7 @@ def train_once(model, optimizer, loss_fn, train_data):
 def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
     mean_train_losses, mean_dev_losses = np.zeros(epochs), np.zeros(epochs)
     best_loss_epoch, best_ed_epoch = 0, 0
-    best_dev_loss, best_dev_edit_distance = 0., 0.
+    best_dev_loss, best_dev_edit_distance = 10e10, 10e10
 
     for epoch in tqdm(range(epochs)):
         t = time.time()
@@ -81,8 +81,8 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
             best_dev_loss = dev_loss
             best_loss_epoch = epoch
             save_model(model, optimizer, args, epoch, MODELPATH_LOSS)
-        if edit_distance < best_edit_distance:
-            best_edit_distance = edit_distance
+        if edit_distance < best_dev_edit_distance:
+            best_dev_edit_distance = edit_distance
             best_ed_epoch = epoch
             save_model(model, optimizer, args, epoch, MODELPATH_ED)
 
@@ -90,9 +90,11 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
         mean_dev_losses[epoch] = dev_loss
 
     # TODO: be more specific in the naming
+    if not os.path.isdir('losses'):
+        os.mkdir('losses')
     np.save("losses/train", mean_train_losses)
     np.save("losses/dev", mean_dev_losses)
-    record(best_loss_epoch, best_dev_loss, best_ed_epoch, best_edit_distance)
+    record(best_loss_epoch, best_dev_loss, best_ed_epoch, best_dev_edit_distance)
 
 
 def record(best_loss_epoch, best_loss, best_ed_epoch, edit_distance):
@@ -137,9 +139,10 @@ def evaluate(model, loss_fn, dataset):
             #   instead of comparing against the protoform
             (encoder_states, memory), embedded_x = model.encode(daughter_forms, DEVICE)
             prediction = model.decode(encoder_states, memory, embedded_x, MAX_LENGTH, DEVICE)
-            # TODO: get the indexing / batching correct
-
-            predict_str, protoform_str = DataHandler.to_string(prediction[0]), DataHandler.to_string(protoform_tensor)
+            # TODO: get the batching correct
+            # TODO: will need to change this after we change the preprocessing
+            predict_str, protoform_str = \
+                DataHandler.to_string(I2C, prediction), DataHandler.to_string(I2C, [idx for l, idx in protoform])
             edit_distance += get_edit_distance(predict_str, protoform_str)
             if predict_str == protoform_str:
                 n_correct += 1
