@@ -166,44 +166,73 @@ class DataHandler:
         return dataset, vocab, langs
 
     @classmethod
-    def get_cognateset_batch(cls, dataset, langs, C2I, device):
+    def get_cognateset_batch(cls, dataset, langs, C2I, L2I, device, I2C):
         """
         Convert both the daughter and protoform character lists to indices in the vocab
         """
         protolang = langs[0]
         for cognate, entry in dataset:
+            # L is the length of the cognate set - number of tokens in the set, including separators
+            # lang_tensor specifies the language for each token in the input - (L,)
+            # input_tensor specifies the input tensor - (L,)
+            # target_tensor specifies the target tensor - (T,)
+            # TODO: if we go through with this, reshape so it's batch first
+
             # 1. convert the chars to indices
             # 2. then zip with the lang - List of (lang, index tensor)
             # 3. in the Embedding layer, add the BOS/EOS and the separator embeddings and do the language and char embeddings
             # the languages are supplied so the model knows what language embedding to apply
-            target_batch = [('sep', C2I["<"])] + \
-                [(protolang, C2I[char if char in C2I else "<unk>"]) for char in entry["protoform"][protolang]] + \
-                [('sep', C2I[">"])]
+            target_tokens = []
+            target_langs = []
+            for lang, char in [('sep', "<")] + \
+                [(protolang, char) for char in entry["protoform"][protolang]] + \
+                [('sep', ">")]:
+                target_tokens.append(C2I[char if char in C2I else "<unk>"])
+                target_langs.append(L2I[lang])
 
-            # example cognate set
-            #      <*French:croître*Italian:crescere*Spanish:crecer*Portuguese:crecer*Romanian:crește*>
+            # print([I2C[idx] for idx in target_tokens])
+            # print([(langs + ['sep'])[idx] for idx in target_langs])
+
+            # TODO: don't do the to(device) here - move out to main.py
+            target_tokens = torch.tensor(target_tokens).to(device)
+            target_langs = torch.tensor(target_langs).to(device)
+
+            # example cognate set (as a string)
+            #     input: <*French:croître*Italian:crescere*Spanish:crecer*Portuguese:crecer*Romanian:crește*>
+            #     protoform: <crescere>
             # note that the languages will be treated as one token
 
             # start of sequence
-            source_batch = [('sep', C2I["<"])]
+            source_tokens = [C2I["<"]]
+            source_langs = [L2I['sep']]
             for lang in langs[1:]:
-                source_index_sequence = [('sep', C2I['*']), ('sep', C2I[lang]), ('sep', C2I[':'])]
+                source_token_sequence = [C2I['*'], C2I[lang], C2I[':']]
+                # C2I treats the language tag as one token
+                source_lang_sequence = [L2I['sep']] * 3
                 # incomplete cognate set
                 if lang not in entry['daughters']:
-                    source_index_sequence.append((lang, C2I['-']))
+                    source_token_sequence.append(C2I['-'])
+                    source_lang_sequence.append(L2I[lang])
                 else:
                     raw_source_sequence = entry['daughters'][lang]
                     # note: C2I will recognize each language's name as a token, so it will not go to UNK
-                    source_index_sequence += [(lang, C2I[char if char in C2I else "<unk>"])
-                                              for char in raw_source_sequence]
-                source_batch += source_index_sequence
-            source_batch.append(('sep', C2I["*"]))
+                    for char in raw_source_sequence:
+                        source_token_sequence.append(C2I[char if char in C2I else "<unk>"])
+                        source_lang_sequence.append(L2I[lang])
+                source_tokens += source_token_sequence
+                source_langs += source_lang_sequence
             # end of sequence
-            source_batch.append(('sep', C2I[">"]))
+            source_tokens += [C2I["*"], C2I[">"]]
+            source_langs += [L2I['sep'], L2I['sep']]
+
+            # print(''.join([I2C[idx] for idx in source_tokens]))
+            # print([(langs + ['sep'])[idx] for idx in source_langs])
+
+            source_tokens = torch.tensor(source_tokens).to(device)
+            source_langs = torch.tensor(source_langs).to(device)
 
             # used when calculating the loss
-            target_tensor = torch.tensor([idx for _, idx in target_batch]).to(device)
-            yield source_batch, target_batch, target_tensor
+            yield source_tokens, source_langs, target_tokens, target_langs
 
     # TODO: just use the vocab class from the transformer
     @classmethod
