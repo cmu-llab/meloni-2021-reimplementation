@@ -30,10 +30,12 @@ def get_edit_distance(s1, s2):
 def train_once(model, optimizer, loss_fn, train_data):
     model.train()  # https://stackoverflow.com/questions/60018578/what-does-model-eval-do-in-pytorch
 
+    # TODO: improvement - do not redo the computation in get_cognateset_batch over and over
     random.shuffle(train_data)
     good, bad = 0, 0
     total_train_loss = 0
     for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(train_data, langs, C2I, DEVICE):
+        # TODO: check if i'm supposed to do this
         optimizer.zero_grad()
 
         # TODO: do the to(device) thingy here
@@ -64,13 +66,13 @@ def train_once(model, optimizer, loss_fn, train_data):
 def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
     mean_train_losses, mean_dev_losses = np.zeros(epochs), np.zeros(epochs)
     best_loss_epoch, best_ed_epoch = 0, 0
-    best_dev_loss, best_dev_edit_distance = 10e10, 10e10
+    best_dev_loss, best_dev_edit_distance = 0, 10e10
 
     for epoch in tqdm(range(epochs)):
         t = time.time()
 
         train_loss, train_accuracy = train_once(model, optimizer, loss_fn, train_data)
-        dev_loss, edit_distance, dev_accuracy = evaluate(model, loss_fn, dev_data)
+        dev_loss, edit_distance, dev_accuracy, _ = evaluate(model, loss_fn, dev_data)
         print(f'< epoch {epoch} >  (elapsed: {time.time() - t:.2f}s)')
         print(f'  * [train]  loss: {train_loss:.6f}')
         dev_result_line = f'  * [ dev ]  loss: {dev_loss:.6f}'
@@ -128,6 +130,7 @@ def evaluate(model, loss_fn, dataset):
         total_loss = 0
         edit_distance = 0
         n_correct = 0
+        predictions = []
         for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(dataset, langs, C2I, DEVICE):
             # calculate loss
             logits = model(daughter_forms, protoform, DEVICE)
@@ -146,12 +149,13 @@ def evaluate(model, loss_fn, dataset):
             edit_distance += get_edit_distance(predict_str, protoform_str)
             if predict_str == protoform_str:
                 n_correct += 1
+            predictions.append((predict_str, protoform_str))
 
     accuracy = n_correct / len(dataset)
     mean_loss = total_loss / len(dataset)
     mean_edit_distance = edit_distance / len(dataset)
 
-    return mean_loss, mean_edit_distance, accuracy
+    return mean_loss, mean_edit_distance, accuracy, predictions
 
 
 def save_model(model, optimizer, args, epoch, filepath):
@@ -161,7 +165,6 @@ def save_model(model, optimizer, args, epoch, filepath):
         'optim': optimizer.state_dict(),
         'args': args,
         'epoch': epoch,
-        'C2I': C2I,
     }
     torch.save(save_info, filepath)
     print(f'\t>> saved model to {filepath}')
@@ -170,6 +173,18 @@ def save_model(model, optimizer, args, epoch, filepath):
 def load_model(filepath):
     saved_info = torch.load(filepath)
     return saved_info
+
+
+def write_preds(filepath, predictions):
+    # predictions: predicted - original cognate
+    # TODO: should we try adding the original cognate set
+    with open(filepath, 'w') as f:
+        f.write("prediction\tgold standard\n")
+        for pred, gold_std in predictions:
+            # remove BOS and EOS
+            pred = pred[1:-1]
+            gold_std = gold_std[1:-1]
+            f.write(f"{pred}\t{gold_std}\n")
 
 
 if __name__ == '__main__':
@@ -196,6 +211,8 @@ if __name__ == '__main__':
     DATASET = args.dataset
     NUM_LAYERS = args.num_layers
     NETWORK = args.network
+    if not os.path.isdir('checkpoints'):
+        os.mkdir('checkpoints')
     MODELPATH_LOSS = f'./checkpoints/{DATASET}_best_loss.pt'
     MODELPATH_ED = f'./checkpoints/{DATASET}_best_ed.pt'
 
@@ -250,8 +267,6 @@ if __name__ == '__main__':
 
     train(NUM_EPOCHS, model, optimizer, loss_fn, train_dataset, dev_dataset)
 
-    if not os.path.isdir('checkpoints'):
-        os.mkdir('checkpoints')
     # evaluate on the model with the best loss and the one with the best edit distance
     for filepath, criterion in [(MODELPATH_LOSS, 'loss'), (MODELPATH_ED, 'edit distance')]:
         saved_info = load_model(filepath)
@@ -269,10 +284,15 @@ if __name__ == '__main__':
         model.load_state_dict(saved_info['model'])
 
         test_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/test.pickle')
-        dev_loss, dev_ed, dev_acc = evaluate(model, loss_fn, dev_dataset)
-        test_loss, test_ed, test_acc = evaluate(model, loss_fn, test_dataset)
+        dev_loss, dev_ed, dev_acc, dev_preds = evaluate(model, loss_fn, dev_dataset)
+        test_loss, test_ed, test_acc, test_preds = evaluate(model, loss_fn, test_dataset)
 
-        # TODO: print the predictions
+        if not os.path.isdir('predictions'):
+            os.mkdir('predictions')
+        if not os.path.isdir('predictions/' + DATASET):
+            os.mkdir('predictions/' + DATASET)
+        write_preds('predictions/' + DATASET + '/best-' + criterion + '-dev', dev_preds)
+        write_preds('predictions/' + DATASET + '/best-' + criterion + '-test', test_preds)
 
         # TODO: remember to calculate normalized edit distance
         print(f'===== <FINAL - best {criterion}>  (epoch: {saved_info["epoch"]}) ======')
@@ -285,5 +305,3 @@ if __name__ == '__main__':
         print(f'  * loss: {test_loss}')
         print(f'  * edit distance: {test_ed}')
         print(f'  * accuracy: {test_acc}')
-
-# TODO: make directories if they do not exist
