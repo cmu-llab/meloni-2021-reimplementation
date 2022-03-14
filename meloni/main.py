@@ -67,11 +67,7 @@ def train_once(model, optimizer, loss_fn, train_data):
 def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
     mean_train_losses, mean_dev_losses = np.zeros(epochs), np.zeros(epochs)
     best_loss_epoch, best_ed_epoch = 0, 0
-    best_dev_loss, best_dev_edit_distance = 0, 10e10
-
-    # precompute the tensors once. reuse
-    train_data = DataHandler.get_cognateset_batch(train_data, langs, C2I, L2I, DEVICE, I2C)
-    dev_data = DataHandler.get_cognateset_batch(dev_data, langs, C2I, L2I, DEVICE, I2C)
+    best_dev_loss, best_dev_edit_distance = 10e10, 10e10
 
     for epoch in tqdm(range(epochs)):
         t = time.time()
@@ -105,6 +101,12 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
 
 
 def record(best_loss_epoch, best_loss, best_ed_epoch, edit_distance):
+    print(f'===== <TRAINING > ======')
+    print(f'[dev]')
+    print(f'  * loss: {best_loss}  (epoch: {best_loss_epoch})')
+    print(f'  * edit distance: {edit_distance}  (epoch: {best_ed_epoch})')
+    print()
+
     if not os.path.isdir('results'):
         os.mkdir('results')
     if not os.path.isdir('results/' + DATASET):
@@ -149,7 +151,7 @@ def evaluate(model, loss_fn, dataset):
             prediction = model.decode(encoder_states, memory, embedded_x, MAX_LENGTH, DEVICE)
             # TODO: get the batching correct
             predict_str, protoform_str = \
-                DataHandler.to_string(I2C, prediction), DataHandler.to_string(I2C, target_tokens)
+                vocab.to_string(prediction), vocab.to_string(target_tokens)
             edit_distance += get_edit_distance(predict_str, protoform_str)
             if predict_str == protoform_str:
                 n_correct += 1
@@ -163,12 +165,14 @@ def evaluate(model, loss_fn, dataset):
 
 
 def save_model(model, optimizer, args, epoch, filepath):
-    # TODO: store the vocabulary in the RNN Meloni format
+    # TODO: is the model loading the parameters from the subclasses?
     save_info = {
         'model': model.state_dict(),
         'optim': optimizer.state_dict(),
         'args': args,
         'epoch': epoch,
+        'vocab': vocab,  # save the vocab to ensure the index mappings are the same during evaluation
+        # langs does not need to be saved because it's an ordered list, not a set
     }
     torch.save(save_info, filepath)
     print(f'\t>> saved model to {filepath}')
@@ -233,6 +237,7 @@ if __name__ == '__main__':
     train_dataset, phoneme_vocab, langs = DataHandler.load_dataset(f'./data/{DATASET}/train.pickle')
     dev_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/dev.pickle')
     # special tokens in the separator embedding's vocabulary
+    langs = langs + ['sep']
     # TODO: create a special vocab just for the separator embeddings
     phoneme_vocab.add("<")
     phoneme_vocab.add(":")
@@ -244,13 +249,11 @@ if __name__ == '__main__':
     # treat each language as a token since each language will be included in the input sequence
     for lang in langs:
         phoneme_vocab.add(lang)
-    C2I = {c: i for i, c in enumerate(sorted(phoneme_vocab))}
-    C2I = defaultdict(lambda: C2I['<unk>'], C2I)
 
-    I2C = {i: c for i, c in enumerate(sorted(phoneme_vocab))}
-    L2I = {l: idx for idx, l in enumerate(langs + ['sep'])}
+    vocab = Vocab(sorted(phoneme_vocab))
+    L2I = {l: idx for idx, l in enumerate(langs)}
 
-    model = Model(C2I, I2C,
+    model = Model(vocab,
                   num_layers=NUM_LAYERS,
                   dropout=DROPOUT,
                   feedforward_dim=FEEDFORWARD_DIM,
@@ -259,7 +262,7 @@ if __name__ == '__main__':
                   model_type=NETWORK,
                   langs=langs,
                   ).to(DEVICE)
-    # TODO: is this what Meloni are doing?
+    # note: Meloni et al do not do Xavier initialization
     for p in model.parameters():
         if p.dim() > 1:
             torch.nn.init.xavier_uniform_(p)
@@ -271,14 +274,19 @@ if __name__ == '__main__':
                                  betas=(BETA_1, BETA_2),
                                  eps=EPS)
 
-    train(NUM_EPOCHS, model, optimizer, loss_fn, train_dataset, dev_dataset)
+    # precompute the tensors once. reuse
+    train_tensors = DataHandler.get_cognateset_batch(train_dataset, langs, vocab, L2I, DEVICE)
+    dev_tensors = DataHandler.get_cognateset_batch(dev_dataset, langs, vocab, L2I, DEVICE)
+    train(NUM_EPOCHS, model, optimizer, loss_fn, train_tensors, dev_tensors)
 
     # evaluate on the model with the best loss and the one with the best edit distance
     for filepath, criterion in [(MODELPATH_LOSS, 'loss'), (MODELPATH_ED, 'edit distance')]:
         saved_info = load_model(filepath)
         args = saved_info['args']
+        vocab = saved_info['vocab']
 
-        model = Model(C2I, I2C,
+        # TODO: have all parameters been loaded?
+        model = Model(vocab,
                       num_layers=NUM_LAYERS,
                       dropout=DROPOUT,
                       feedforward_dim=FEEDFORWARD_DIM,
@@ -290,8 +298,10 @@ if __name__ == '__main__':
         model.load_state_dict(saved_info['model'])
 
         test_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/test.pickle')
-        dev_loss, dev_ed, dev_acc, dev_preds = evaluate(model, loss_fn, dev_dataset)
-        test_loss, test_ed, test_acc, test_preds = evaluate(model, loss_fn, test_dataset)
+        test_tensors = DataHandler.get_cognateset_batch(test_dataset, langs, vocab, L2I, DEVICE)
+
+        dev_loss, dev_ed, dev_acc, dev_preds = evaluate(model, loss_fn, dev_tensors)
+        test_loss, test_ed, test_acc, test_preds = evaluate(model, loss_fn, test_tensors)
 
         if not os.path.isdir('predictions'):
             os.mkdir('predictions')

@@ -1,6 +1,38 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as f
+from collections import defaultdict
+
+
+class Vocab:
+    def __init__(self, vocabs):
+        self._v2i = defaultdict(self._default_idx)
+        v2i = {}
+        for idx, vocab in enumerate(vocabs):
+            v2i[vocab] = idx
+        self._v2i.update(v2i)
+        self._i2v = defaultdict(self._default_vocab)
+        self._i2v.update({v: k for k, v in self._v2i.items()})
+        self.default_idx = self._v2i['<unk>']
+        self.len = len(self._v2i)
+        assert len(self._v2i) == len(self._i2v)
+
+    def _default_idx(self):
+        return self.default_idx
+
+    def _default_vocab(self):
+        return '<unk>'
+
+    def to_string(self, indices):
+        # indices is a tensor
+        str = ''
+        for idx in indices:
+            str += self._i2v[idx.item()]
+        return str
+
+    def __len__(self):
+        # ensure length is static because defaultdict inserts unseen keys upon first access
+        return self.len
 
 
 class Embedding(nn.Module):
@@ -11,8 +43,7 @@ class Embedding(nn.Module):
     """
     def __init__(self, embedding_dim, langs, C2I):
         super(Embedding, self).__init__()
-        self.C2I = C2I
-        self.langs = langs + ['sep']
+        self.langs = langs
         self.char_embeddings = nn.Embedding(len(C2I), embedding_dim)
         self.lang_embeddings = nn.Embedding(len(self.langs), embedding_dim)
         # map concatenated source and language embedding to 1 embedding
@@ -82,7 +113,7 @@ class Model(nn.Module):
     """
     Encoder-decoder architecture
     """
-    def __init__(self, C2I, I2C,
+    def __init__(self, C2I,
                  num_layers,
                  dropout,
                  feedforward_dim,
@@ -93,7 +124,6 @@ class Model(nn.Module):
         super(Model, self).__init__()
         # TODO: modularize so we can get dialects for Austronesian, Chinese, or Romance
         # TODO: can we modularize this better?
-        self.I2C = I2C
         self.C2I = C2I
 
         # share embedding across all languages, including the proto-language
@@ -104,7 +134,7 @@ class Model(nn.Module):
 
         self.langs = langs
         self.protolang = langs[0]
-        self.L2I = {l: idx for idx, l in enumerate(langs + ['sep'])}
+        self.L2I = {l: idx for idx, l in enumerate(langs)}
 
         # TODO: the encoders and the l2e are not getting saved to the model state
 
@@ -147,7 +177,7 @@ class Model(nn.Module):
         # decoder
         # start of protoform sequence
         # TODO: is this really necessary? we already have < and > serving as BOS/EOS
-        start_char = (torch.tensor([self.C2I["<s>"]]).to(device), torch.tensor([self.C2I["sep"]]).to(device))
+        start_char = (torch.tensor([self.C2I._v2i["<s>"]]).to(device), torch.tensor([self.L2I["sep"]]).to(device))
         start_encoded = self.embeddings(*start_char)
         # initialize weighted states to the final encoder state
         # TODO: there has to be a better way of doing this indexing - preserve batch dim
@@ -192,7 +222,7 @@ class Model(nn.Module):
     def decode(self, encoder_states, memory, embedded_cognateset, max_length, device):
         # greedy decoding - generate protoform by picking most likely sequence at each time step
 
-        start_char = (torch.tensor([self.C2I["<s>"]]).to(device), torch.tensor([self.C2I["sep"]]).to(device))
+        start_char = (torch.tensor([self.C2I._v2i["<s>"]]).to(device), torch.tensor([self.L2I["sep"]]).to(device))
         start_encoded = self.embeddings(*start_char).to(device)
 
         # initialize weighted states to the final encoder state
@@ -229,7 +259,7 @@ class Model(nn.Module):
             i += 1
             # end of sequence generated
             # TODO: declare EOS as a global variable - same with BOS
-            if predicted_char_idx == self.C2I[">"]:
+            if predicted_char_idx == self.C2I._v2i[">"]:
                 break
 
         return torch.tensor(reconstruction)

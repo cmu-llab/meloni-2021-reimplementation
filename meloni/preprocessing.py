@@ -166,10 +166,11 @@ class DataHandler:
         return dataset, vocab, langs
 
     @classmethod
-    def get_cognateset_batch(cls, dataset, langs, C2I, L2I, device, I2C):
+    def get_cognateset_batch(cls, dataset, langs, C2I, L2I, device):
         """
         Convert both the daughter and protoform character lists to indices in the vocab
         """
+        C2I = C2I._v2i
         cognatesets = {}
 
         protolang = langs[0]
@@ -178,7 +179,6 @@ class DataHandler:
             # lang_tensor specifies the language for each token in the input - (L,)
             # input_tensor specifies the input tensor - (L,)
             # target_tensor specifies the target tensor - (T,)
-            # TODO: if we go through with this, reshape so it's batch first
 
             # 1. convert the chars to indices
             # 2. then zip with the lang - List of (lang, index tensor)
@@ -242,14 +242,6 @@ class DataHandler:
 
         return cognatesets
 
-    # TODO: just use the vocab class from the transformer
-    @classmethod
-    def to_string(cls, I2C, indices):
-        # indices is a tensor
-        str = ''
-        for idx in indices:
-            str += I2C[idx.item()]
-        return str
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
