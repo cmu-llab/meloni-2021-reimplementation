@@ -7,6 +7,7 @@ import numpy as np
 import random
 from preprocessing import DataHandler
 import os
+from collections import defaultdict
 
 
 def get_edit_distance(s1, s2):
@@ -34,17 +35,18 @@ def train_once(model, optimizer, loss_fn, train_data):
     random.shuffle(train_data)
     good, bad = 0, 0
     total_train_loss = 0
-    for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(train_data, langs, C2I, DEVICE):
+    for source_tokens, source_langs, target_tokens, target_langs in \
+            DataHandler.get_cognateset_batch(train_data, langs, C2I, L2I, DEVICE, I2C):
         # TODO: check if i'm supposed to do this
         optimizer.zero_grad()
 
         # TODO: do the to(device) thingy here
-        logits = model(daughter_forms, protoform, DEVICE)
+        logits = model(source_tokens, source_langs, target_tokens, target_langs, DEVICE)
         # logits should be (1, T, |Y|)
 
         # reshape logits to (T, |Y|) - remove batch dim for now
         # protoform_tensor: (T,)
-        loss = loss_fn(logits, protoform_tensor)
+        loss = loss_fn(logits, target_tokens)
         loss.backward()
         total_train_loss += loss.item()
 
@@ -54,8 +56,7 @@ def train_once(model, optimizer, loss_fn, train_data):
 
         # compare indices instead of converting to string
         predicted = torch.argmax(logits, dim=1)
-        # TODO: one is list, one is tensor
-        if predicted == protoform:
+        if torch.equal(predicted, target_tokens):
             good += 1
         else:
             bad += 1
@@ -131,21 +132,20 @@ def evaluate(model, loss_fn, dataset):
         edit_distance = 0
         n_correct = 0
         predictions = []
-        for daughter_forms, protoform, protoform_tensor in DataHandler.get_cognateset_batch(dataset, langs, C2I, DEVICE):
+        for source_tokens, source_langs, target_tokens, target_langs in DataHandler.get_cognateset_batch(dataset, langs, C2I, L2I, DEVICE, I2C):
             # calculate loss
-            logits = model(daughter_forms, protoform, DEVICE)
-            loss = loss_fn(logits, protoform_tensor)
+            logits = model(source_tokens, source_langs, target_tokens, target_langs, DEVICE)
+            loss = loss_fn(logits, target_tokens)
             total_loss += loss.item()
 
             # calculate edit distance
             # necessary to have a separate encode and decode because we are doing greedy decoding here
             #   instead of comparing against the protoform
-            (encoder_states, memory), embedded_x = model.encode(daughter_forms, DEVICE)
+            (encoder_states, memory), embedded_x = model.encode(source_tokens, source_langs, DEVICE)
             prediction = model.decode(encoder_states, memory, embedded_x, MAX_LENGTH, DEVICE)
             # TODO: get the batching correct
-            # TODO: will need to change this after we change the preprocessing
             predict_str, protoform_str = \
-                DataHandler.to_string(I2C, prediction), DataHandler.to_string(I2C, [idx for l, idx in protoform])
+                DataHandler.to_string(I2C, prediction), DataHandler.to_string(I2C, target_tokens)
             edit_distance += get_edit_distance(predict_str, protoform_str)
             if predict_str == protoform_str:
                 n_correct += 1
@@ -241,8 +241,10 @@ if __name__ == '__main__':
     for lang in langs:
         phoneme_vocab.add(lang)
     C2I = {c: i for i, c in enumerate(sorted(phoneme_vocab))}
-    C2I = defaultdict(lambda: '<unk>', C2I)
+    C2I = defaultdict(lambda: C2I['<unk>'], C2I)
+
     I2C = {i: c for i, c in enumerate(sorted(phoneme_vocab))}
+    L2I = {l: idx for idx, l in enumerate(langs + ['sep'])}
 
     model = Model(C2I, I2C,
                   num_layers=NUM_LAYERS,

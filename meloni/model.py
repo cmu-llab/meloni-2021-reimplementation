@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as f
-from collections import defaultdict
 
 
 class Embedding(nn.Module):
@@ -12,20 +11,20 @@ class Embedding(nn.Module):
     """
     def __init__(self, embedding_dim, langs, C2I):
         super(Embedding, self).__init__()
-        self.C2I = defaultdict(lambda: '<unk>', C2I)
+        self.C2I = C2I
         self.langs = langs + ['sep']
-        self.L2I = {l: idx for idx, l in enumerate(self.langs)}
-        self.char_embedding = nn.Embedding(len(C2I), embedding_dim)
+        self.char_embeddings = nn.Embedding(len(C2I), embedding_dim)
         self.lang_embeddings = nn.Embedding(len(self.langs), embedding_dim)
         # map concatenated source and language embedding to 1 embedding
         self.fc = nn.Linear(2 * embedding_dim, embedding_dim)
 
-    def forward(self, char_idx, lang):
-        # TODO: to device
-        char_encoded = self.char_embedding(torch.tensor([char_idx]))
-        lang_encoded = self.lang_embeddings(torch.tensor([self.L2I[lang]]))
+    def forward(self, char_indices, lang_indices):
+        # both result in (L, E), where L is the length of the entire cognate set
+        chars_embedded = self.char_embeddings(char_indices)
+        lang_embedded = self.lang_embeddings(lang_indices)
+
         # concatenate the tensors to form one long embedding then map down to regular embedding size
-        return self.fc(torch.cat((char_encoded, lang_encoded), dim=1))
+        return self.fc(torch.cat((chars_embedded, lang_embedded), dim=-1))
 
 
 class MLP(nn.Module):
@@ -97,19 +96,20 @@ class Model(nn.Module):
         self.I2C = I2C
         self.C2I = C2I
 
-        # TODO: since there are really only two embedding matrices, can just create 2 separate ones
-        encoder = Embedding(embedding_dim, langs, C2I)
         # share embedding across all languages, including the proto-language
-        self.encoders = [encoder for _ in range(len(langs))]
+        self.embeddings = Embedding(embedding_dim, langs, C2I)
+        # have separate embedding for the language
+        # technically, most of the vocab is not used in the separator embedding
+        # since the separator tokens and the character embeddings are disjoint, put them all in the same matrix
+
         self.langs = langs
         self.protolang = langs[0]
         self.L2I = {l: idx for idx, l in enumerate(langs + ['sep'])}
-        # TODO: maybe just explicitly share the encoders?
-        self.l2e = {lang: self.encoders[i] for i, lang in enumerate(langs)}
-        # separators have their own embedding
-        self.l2e["sep"] = Embedding(embedding_dim, langs, C2I)
+
+        # TODO: the encoders and the l2e are not getting saved to the model state
 
         if model_type == "gru":
+            # TODO: fix the dropout
             # TODO: beware of batching
             self.encoder_rnn = nn.GRU(input_size=embedding_dim,
                                       hidden_size=model_size,
@@ -134,21 +134,22 @@ class Model(nn.Module):
                                        batch_first=True)
 
         # TODO: shouldn't we share this with the encoder?
-        self.lang_embedding = nn.Embedding(len(langs), embedding_dim)
+
         self.mlp = MLP(hidden_dim=model_size, feedforward_dim=feedforward_dim, output_size=len(C2I))
         self.attention = Attention(hidden_dim=model_size, embedding_dim=embedding_dim)
 
-    def forward(self, daughter_forms, protoform, device):
+    def forward(self, source_tokens, source_langs, target_tokens, target_langs, device):
         # encoder
         # TODO: is the encoder treating each input as separate?
         # encoder_states: 1 x L x H, memory: 1 x 1 x H, where L = len(daughter_forms)
-        (encoder_states, memory), embedded_cognateset = self.encode(daughter_forms, device)
+        (encoder_states, memory), embedded_cognateset = self.encode(source_tokens, source_langs, device)
 
         # decoder
         # start of protoform sequence
         # TODO: is this really necessary? we already have < and > serving as BOS/EOS
-        start_encoded = self.l2e["sep"](self.C2I["<s>"], "sep").to(device)
-        # initalize weighted states to the final encoder state
+        start_char = (torch.tensor([self.C2I["<s>"]]).to(device), torch.tensor([self.C2I["sep"]]).to(device))
+        start_encoded = self.embeddings(*start_char)
+        # initialize weighted states to the final encoder state
         # TODO: there has to be a better way of doing this indexing - preserve batch dim
         attention_weighted_states = memory.squeeze(dim=0)
         # start_encoded: 1 x E, attention_weighted_states: 1 x H
@@ -159,15 +160,18 @@ class Model(nn.Module):
         scores = []  # TODO: it's faster to initialize the shape then fill it in
 
         # TODO: could we even do this batched or pass in the whole target?? but then we don't control the attention
-        for lang, char in protoform:
+            # there is a batched way of doing it
+
+        for lang, char in zip(target_langs, target_tokens):
             # lang will either be sep or the protolang
             # embedding layer
-            true_char_embedded = self.l2e[self.protolang](char, lang).to(device)
+            true_char_embedded = self.embeddings(char, lang).unsqueeze(dim=0)
             # MLP to get a probability distribution over the possible output phonemes
             char_scores = self.mlp(decoder_state + attention_weighted_states)
             scores.append(char_scores.squeeze(dim=0))
-            # dot product attention over the encoder states
+            # dot product attention over the encoder states - results in (1, H)
             attention_weighted_states = self.attention(decoder_state, encoder_states, embedded_cognateset)
+            # decoder_input: (1, 1, H + E)
             decoder_input = torch.cat((true_char_embedded, attention_weighted_states), dim=1).unsqueeze(dim=0)
             # TODO: make sure that we're really taking the decoder state
             decoder_state, _ = self.decoder_rnn(decoder_input)
@@ -176,16 +180,10 @@ class Model(nn.Module):
         scores = torch.vstack(scores)
         return scores
 
-    def encode(self, daughter_forms, device):
+    def encode(self, source_tokens, source_langs, device):
         # daughter_forms: list of lang and indices in the vocab
-        embedded_cognateset = []
-        for lang, idx in daughter_forms:
-            # use the embedding corresponding to the language
-            # shared for all languages (including the protolanguage), but separators have their own
-            embedded_cognateset.append(self.l2e[lang](idx, lang))
-
-        embedded_cognateset = torch.vstack(embedded_cognateset).to(device)
-        # [1, C, E], batch size of 1, C = len(daughter_forms)
+        embedded_cognateset = self.embeddings(source_tokens, source_langs).to(device)
+        # batch size of 1
         embedded_cognateset = embedded_cognateset.unsqueeze(dim=0)
 
         # TODO: note that the LSTM returns something diff than the GRU in pytorch
@@ -193,14 +191,18 @@ class Model(nn.Module):
 
     def decode(self, encoder_states, memory, embedded_cognateset, max_length, device):
         # greedy decoding - generate protoform by picking most likely sequence at each time step
-        start_encoded = self.l2e["sep"](self.C2I["<s>"], "sep").to(device)
-        # initalize weighted states to the final encoder state
+
+        start_char = (torch.tensor([self.C2I["<s>"]]).to(device), torch.tensor([self.C2I["sep"]]).to(device))
+        start_encoded = self.embeddings(*start_char).to(device)
+
+        # initialize weighted states to the final encoder state
         # TODO: there has to be a better way of doing this indexing - preserve batch dim
         attention_weighted_states = memory.squeeze(dim=0)
         # start_encoded: 1 x E, attention_weighted_states: 1 x H
         # concatenated into 1 x (H + E)
         decoder_input = torch.cat((start_encoded, attention_weighted_states), dim=1).unsqueeze(dim=0)
         decoder_state, _ = self.decoder_rnn(decoder_input)
+        # TODO: is there a better way to do this?
         reconstruction = []
 
         i = 0
@@ -211,19 +213,23 @@ class Model(nn.Module):
             # TODO: make sure it's along the correct dimension
             # char_scores: [1, 1, |Y|]
             predicted_char = torch.argmax(char_scores.squeeze(dim=0)).item()
-            predicted_char_encoded = self.l2e[self.protolang](predicted_char, self.protolang).to(device)
+            predicted_char_idx = predicted_char
+
+            predicted_char = (torch.tensor([predicted_char]).to(device), torch.tensor([self.L2I[self.protolang]]).to(device))
+            predicted_char_embedded = self.embeddings(*predicted_char)
 
             # dot product attention over the encoder states
             attention_weighted_states = self.attention(decoder_state, encoder_states, embedded_cognateset)
-            decoder_input = torch.cat((predicted_char_encoded, attention_weighted_states), dim=1).unsqueeze(dim=0)
+            # (1, 1, H + E)
+            decoder_input = torch.cat((predicted_char_embedded, attention_weighted_states), dim=1).unsqueeze(dim=0)
             decoder_state, _ = self.decoder_rnn(decoder_input)
 
-            reconstruction.append(predicted_char)
+            reconstruction.append(predicted_char_idx)
 
             i += 1
             # end of sequence generated
             # TODO: declare EOS as a global variable - same with BOS
-            if self.I2C[predicted_char] == ">":
+            if predicted_char_idx == self.C2I[">"]:
                 break
 
-        return reconstruction
+        return torch.tensor(reconstruction)

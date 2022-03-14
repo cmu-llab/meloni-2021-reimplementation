@@ -230,6 +230,10 @@ class DataHandler:
 
             source_tokens = torch.tensor(source_tokens).to(device)
             source_langs = torch.tensor(source_langs).to(device)
+            # source_tokens: (L,)
+            # source_langs: (L,)
+            # target_tokens: (T,)
+            # target_langs: (T,)
 
             # used when calculating the loss
             yield source_tokens, source_langs, target_tokens, target_langs
@@ -237,9 +241,10 @@ class DataHandler:
     # TODO: just use the vocab class from the transformer
     @classmethod
     def to_string(cls, I2C, indices):
+        # indices is a tensor
         str = ''
         for idx in indices:
-            str += I2C[idx]
+            str += I2C[idx.item()]
         return str
 
 if __name__ == '__main__':
