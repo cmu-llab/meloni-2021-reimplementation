@@ -170,6 +170,8 @@ class DataHandler:
         """
         Convert both the daughter and protoform character lists to indices in the vocab
         """
+        cognatesets = {}
+
         protolang = langs[0]
         for cognate, entry in dataset:
             # L is the length of the cognate set - number of tokens in the set, including separators
@@ -236,7 +238,9 @@ class DataHandler:
             # target_langs: (T,)
 
             # used when calculating the loss
-            yield source_tokens, source_langs, target_tokens, target_langs
+            cognatesets[cognate] = (source_tokens, source_langs, target_tokens, target_langs)
+
+        return cognatesets
 
     # TODO: just use the vocab class from the transformer
     @classmethod

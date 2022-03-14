@@ -31,12 +31,12 @@ def get_edit_distance(s1, s2):
 def train_once(model, optimizer, loss_fn, train_data):
     model.train()  # https://stackoverflow.com/questions/60018578/what-does-model-eval-do-in-pytorch
 
-    # TODO: improvement - do not redo the computation in get_cognateset_batch over and over
-    random.shuffle(train_data)
+    order = list(train_data.keys())
+    random.shuffle(order)
     good, bad = 0, 0
     total_train_loss = 0
-    for source_tokens, source_langs, target_tokens, target_langs in \
-            DataHandler.get_cognateset_batch(train_data, langs, C2I, L2I, DEVICE, I2C):
+    for cognate in order:
+        source_tokens, source_langs, target_tokens, target_langs = train_data[cognate]
         # TODO: check if i'm supposed to do this
         optimizer.zero_grad()
 
@@ -68,6 +68,10 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
     mean_train_losses, mean_dev_losses = np.zeros(epochs), np.zeros(epochs)
     best_loss_epoch, best_ed_epoch = 0, 0
     best_dev_loss, best_dev_edit_distance = 0, 10e10
+
+    # precompute the tensors once. reuse
+    train_data = DataHandler.get_cognateset_batch(train_data, langs, C2I, L2I, DEVICE, I2C)
+    dev_data = DataHandler.get_cognateset_batch(dev_data, langs, C2I, L2I, DEVICE, I2C)
 
     for epoch in tqdm(range(epochs)):
         t = time.time()
@@ -132,7 +136,7 @@ def evaluate(model, loss_fn, dataset):
         edit_distance = 0
         n_correct = 0
         predictions = []
-        for source_tokens, source_langs, target_tokens, target_langs in DataHandler.get_cognateset_batch(dataset, langs, C2I, L2I, DEVICE, I2C):
+        for _, (source_tokens, source_langs, target_tokens, target_langs) in dataset.items():
             # calculate loss
             logits = model(source_tokens, source_langs, target_tokens, target_langs, DEVICE)
             loss = loss_fn(logits, target_tokens)
