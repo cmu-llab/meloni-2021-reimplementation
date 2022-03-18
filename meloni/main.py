@@ -7,10 +7,12 @@ import numpy as np
 import random
 from preprocessing import DataHandler
 import os
-from collections import defaultdict
+import wandb
 
 
 def get_edit_distance(s1, s2):
+    # TODO: remove the BOS/EOS from consideration
+
     if len(s1) > len(s2):
         s1, s2 = s2, s1
     # len(s1) <= len(s2)
@@ -73,7 +75,15 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
         t = time.time()
 
         train_loss, train_accuracy = train_once(model, optimizer, loss_fn, train_data)
-        dev_loss, edit_distance, dev_accuracy, _ = evaluate(model, loss_fn, dev_data)
+        dev_loss, edit_distance, dev_accuracy, _ = evaluate(model, loss_fn, dev_data, DEVICE, MAX_LENGTH)
+        wandb.log(
+            {
+                "train_loss": train_loss,
+                "dev_loss": dev_loss,
+                "dev_edit_distance": edit_distance,
+                "accuracy": dev_accuracy,
+            }
+        )
         print(f'< epoch {epoch} >  (elapsed: {time.time() - t:.2f}s)')
         print(f'  * [train]  loss: {train_loss:.6f}')
         dev_result_line = f'  * [ dev ]  loss: {dev_loss:.6f}'
@@ -88,6 +98,11 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
             best_dev_edit_distance = edit_distance
             best_ed_epoch = epoch
             save_model(model, optimizer, args, epoch, MODELPATH_ED)
+            wandb.log(
+                {
+                    "best_dev_edit_distance": best_dev_edit_distance,
+                }
+            )
 
         mean_train_losses[epoch] = train_loss
         mean_dev_losses[epoch] = dev_loss
@@ -95,8 +110,11 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
     # TODO: be more specific in the naming
     if not os.path.isdir('losses'):
         os.mkdir('losses')
-    np.save("losses/train", mean_train_losses)
-    np.save("losses/dev", mean_dev_losses)
+    if not os.path.isdir('losses/' + DATASET):
+        os.mkdir('losses/' + DATASET)
+    # TODO: the dynet loss values differ from the RNN's
+    np.save(f"losses/{DATASET}/train", mean_train_losses)
+    np.save(f"losses/{DATASET}/dev", mean_dev_losses)
     record(best_loss_epoch, best_dev_loss, best_ed_epoch, best_dev_edit_distance)
 
 
@@ -130,7 +148,7 @@ def record(best_loss_epoch, best_loss, best_ed_epoch, edit_distance):
         fout.write(f'{DATASET}. loss: {best_loss} ({best_loss_epoch})   ||   {edit_distance} ({best_ed_epoch})\n')
 
 
-def evaluate(model, loss_fn, dataset):
+def evaluate(model, loss_fn, dataset, device, max_length, vocab):
     model.eval()
 
     with torch.no_grad():
@@ -140,15 +158,15 @@ def evaluate(model, loss_fn, dataset):
         predictions = []
         for _, (source_tokens, source_langs, target_tokens, target_langs) in dataset.items():
             # calculate loss
-            logits = model(source_tokens, source_langs, target_tokens, target_langs, DEVICE)
+            logits = model(source_tokens, source_langs, target_tokens, target_langs, device)
             loss = loss_fn(logits, target_tokens)
             total_loss += loss.item()
 
             # calculate edit distance
             # necessary to have a separate encode and decode because we are doing greedy decoding here
             #   instead of comparing against the protoform
-            (encoder_states, memory), embedded_x = model.encode(source_tokens, source_langs, DEVICE)
-            prediction = model.decode(encoder_states, memory, embedded_x, MAX_LENGTH, DEVICE)
+            (encoder_states, memory), embedded_x = model.encode(source_tokens, source_langs, device)
+            prediction = model.decode(encoder_states, memory, embedded_x, max_length, device)
             # TODO: get the batching correct
             predict_str, protoform_str = \
                 vocab.to_string(prediction), vocab.to_string(target_tokens)
@@ -168,6 +186,7 @@ def save_model(model, optimizer, args, epoch, filepath):
     # TODO: is the model loading the parameters from the subclasses?
     save_info = {
         'model': model.state_dict(),
+        # TODO: save torch.nn.CrossEntropyLoss()
         'optim': optimizer.state_dict(),
         'args': args,
         'epoch': epoch,
@@ -198,7 +217,8 @@ def write_preds(filepath, predictions):
 if __name__ == '__main__':
     torch.manual_seed(0)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, required=True, help='chinese/romance_orthographic/romance_phonetic/austronesian')
+    parser.add_argument('--dataset', type=str, required=True,
+                        help='chinese/romance_orthographic/romance_phonetic/austronesian')
     parser.add_argument('--network', type=str, required=True, help='lstm/gru')
     parser.add_argument('--num_layers', type=int, required=True, help='number of RNN layers')
     parser.add_argument('--model_size', type=int, required=True, help='lstm hidden layer size')
@@ -214,25 +234,28 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, required=True, help='batch_size')
     args = parser.parse_args()
 
+    wandb.init(config=args)
+    config = wandb.config
+
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-    NUM_EPOCHS = args.epochs
+    NUM_EPOCHS = config["epochs"]  # args.epochs
     DATASET = args.dataset
-    NUM_LAYERS = args.num_layers
+    NUM_LAYERS = config["num_layers"]  # args.num_layers
     NETWORK = args.network
     if not os.path.isdir('checkpoints'):
         os.mkdir('checkpoints')
     MODELPATH_LOSS = f'./checkpoints/{DATASET}_best_loss.pt'
     MODELPATH_ED = f'./checkpoints/{DATASET}_best_ed.pt'
 
-    LEARNING_RATE = args.lr
-    BETA_1 = args.beta1
-    BETA_2 = args.beta2
-    EPS = args.eps
-    EMBEDDING_SIZE = args.embedding_size
-    DROPOUT = args.dropout
+    LEARNING_RATE = config["lr"]  # args.lr
+    BETA_1 = config["beta1"]  # args.beta1
+    BETA_2 = config["beta2"]  # args.beta2
+    EPS = config["eps"]  # args.eps
+    EMBEDDING_SIZE = config["embedding_size"]  # args.embedding_size
+    DROPOUT = config["dropout"]  # args.dropout
     MAX_LENGTH = 30 if 'romance' in DATASET else 15
-    HIDDEN_SIZE = args.model_size
-    FEEDFORWARD_DIM = args.feedforward_dim
+    HIDDEN_SIZE = config["model_size"]  # args.model_size
+    FEEDFORWARD_DIM = config["feedforward_dim"]  # args.feedforward_dim
 
     train_dataset, phoneme_vocab, langs = DataHandler.load_dataset(f'./data/{DATASET}/train.pickle')
     dev_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/dev.pickle')
@@ -278,46 +301,3 @@ if __name__ == '__main__':
     train_tensors = DataHandler.get_cognateset_batch(train_dataset, langs, vocab, L2I, DEVICE)
     dev_tensors = DataHandler.get_cognateset_batch(dev_dataset, langs, vocab, L2I, DEVICE)
     train(NUM_EPOCHS, model, optimizer, loss_fn, train_tensors, dev_tensors)
-
-    # evaluate on the model with the best loss and the one with the best edit distance
-    for filepath, criterion in [(MODELPATH_LOSS, 'loss'), (MODELPATH_ED, 'edit distance')]:
-        saved_info = load_model(filepath)
-        args = saved_info['args']
-        vocab = saved_info['vocab']
-
-        # TODO: have all parameters been loaded?
-        model = Model(vocab,
-                      num_layers=NUM_LAYERS,
-                      dropout=DROPOUT,
-                      feedforward_dim=FEEDFORWARD_DIM,
-                      embedding_dim=EMBEDDING_SIZE,
-                      model_size=HIDDEN_SIZE,
-                      model_type=NETWORK,
-                      langs=langs,
-                      ).to(DEVICE)
-        model.load_state_dict(saved_info['model'])
-
-        test_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/test.pickle')
-        test_tensors = DataHandler.get_cognateset_batch(test_dataset, langs, vocab, L2I, DEVICE)
-
-        dev_loss, dev_ed, dev_acc, dev_preds = evaluate(model, loss_fn, dev_tensors)
-        test_loss, test_ed, test_acc, test_preds = evaluate(model, loss_fn, test_tensors)
-
-        if not os.path.isdir('predictions'):
-            os.mkdir('predictions')
-        if not os.path.isdir('predictions/' + DATASET):
-            os.mkdir('predictions/' + DATASET)
-        write_preds('predictions/' + DATASET + '/best-' + criterion + '-dev', dev_preds)
-        write_preds('predictions/' + DATASET + '/best-' + criterion + '-test', test_preds)
-
-        # TODO: remember to calculate normalized edit distance
-        print(f'===== <FINAL - best {criterion}>  (epoch: {saved_info["epoch"]}) ======')
-        print(f'[dev]')
-        print(f'  * loss: {dev_loss}')
-        print(f'  * edit distance: {dev_ed}')
-        print(f'  * accuracy: {dev_acc}')
-        print()
-        print(f'[test]')
-        print(f'  * loss: {test_loss}')
-        print(f'  * edit distance: {test_ed}')
-        print(f'  * accuracy: {test_acc}')

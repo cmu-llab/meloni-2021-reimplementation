@@ -1,0 +1,46 @@
+program: main.py
+method: bayes
+metric:
+  goal: minimize
+  name: best_dev_edit_distance
+parameters:
+  batch_size:
+    max: 2
+    min: 1
+    distribution: int_uniform
+  network:
+    value: gru
+  dataset:
+    value: chinese
+  feedforward_dim:
+    max: 348
+    min: 50
+    distribution: int_uniform
+  embedding_size:
+    max: 334
+    min: 50
+    distribution: int_uniform
+  num_layers:
+    value: 1
+  model_size:
+    max: 112
+    min: 25
+    distribution: int_uniform
+  dropout:
+    max: 0.4
+    min: 0.2
+    distribution: uniform
+  epochs:
+    max: 200
+    min: 75
+    distribution: int_uniform
+  beta2:
+    value: 0.999
+  beta1:
+    value: 0.9
+  eps:
+    value: 1.e-8
+  lr:
+    max: 0.0008075736156256438
+    min: 0.00011061754826507515
+    distribution: uniform
