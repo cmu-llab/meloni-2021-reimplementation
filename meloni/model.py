@@ -136,31 +136,25 @@ class Model(nn.Module):
         self.protolang = langs[0]
         self.L2I = {l: idx for idx, l in enumerate(langs)}
 
-        # TODO: the encoders and the l2e are not getting saved to the model state
-
+        self.dropout = nn.Dropout(dropout)
         if model_type == "gru":
-            # TODO: fix the dropout
             # TODO: beware of batching
             self.encoder_rnn = nn.GRU(input_size=embedding_dim,
                                       hidden_size=model_size,
                                       num_layers=num_layers,
-                                      dropout=dropout,
                                       batch_first=True)
             self.decoder_rnn = nn.GRU(input_size=embedding_dim + model_size,
                                       hidden_size=model_size,
                                       num_layers=num_layers,
-                                      dropout=dropout,
                                       batch_first=True)
         else:
             self.encoder_rnn = nn.LSTM(input_size=embedding_dim,
                                        hidden_size=model_size,
                                        num_layers=num_layers,
-                                       dropout=dropout,
                                        batch_first=True)
             self.decoder_rnn = nn.LSTM(input_size=embedding_dim + model_size,
                                        hidden_size=model_size,
                                        num_layers=num_layers,
-                                       dropout=dropout,
                                        batch_first=True)
 
         # TODO: shouldn't we share this with the encoder?
@@ -173,6 +167,8 @@ class Model(nn.Module):
         # TODO: is the encoder treating each input as separate?
         # encoder_states: 1 x L x H, memory: 1 x 1 x H, where L = len(daughter_forms)
         (encoder_states, memory), embedded_cognateset = self.encode(source_tokens, source_langs, device)
+        # perform dropout on the output of the RNN
+        encoder_states = self.dropout(encoder_states)
 
         # decoder
         # start of protoform sequence
@@ -185,8 +181,11 @@ class Model(nn.Module):
         # start_encoded: 1 x E, attention_weighted_states: 1 x H
         # concatenated into 1 x (H + E)
         decoder_input = torch.cat((start_encoded, attention_weighted_states), dim=1).unsqueeze(dim=0)
-        # TODO: the decoder
+        # perform dropout on the input to the RNN
+        decoder_input = self.dropout(decoder_input)
         decoder_state, _ = self.decoder_rnn(decoder_input)
+        # perform dropout on the output of the RNN
+        decoder_state = self.dropout(decoder_state)
         scores = []  # TODO: it's faster to initialize the shape then fill it in
 
         # TODO: could we even do this batched or pass in the whole target?? but then we don't control the attention
@@ -204,7 +203,12 @@ class Model(nn.Module):
             # decoder_input: (1, 1, H + E)
             decoder_input = torch.cat((true_char_embedded, attention_weighted_states), dim=1).unsqueeze(dim=0)
             # TODO: make sure that we're really taking the decoder state
+
+            # perform dropout on the input to the RNN
+            decoder_input = self.dropout(decoder_input)
             decoder_state, _ = self.decoder_rnn(decoder_input)
+            # perform dropout on the output of the RNN
+            decoder_state = self.dropout(decoder_state)
 
         # |T| elem list with (1, |Y|) -> (T, |Y|)
         scores = torch.vstack(scores)
@@ -217,6 +221,8 @@ class Model(nn.Module):
         embedded_cognateset = embedded_cognateset.unsqueeze(dim=0)
 
         # TODO: note that the LSTM returns something diff than the GRU in pytorch
+        # perform dropout on the input to the RNN
+        embedded_cognateset = self.dropout(embedded_cognateset)
         return self.encoder_rnn(embedded_cognateset), embedded_cognateset
 
     def decode(self, encoder_states, memory, embedded_cognateset, max_length, device):
