@@ -55,6 +55,12 @@ class DataHandler:
         tone = None
         if len(subtokens) > 1:
             tone = subtokens[1]
+            tone = {
+                '¹': '平',
+                '²': '上',
+                '³': '去',
+                '⁴': '入'
+            }[tone]
         return subtokens[0], tone
 
     def _clean_sinitic_daughter_string(self, raw_string):
@@ -71,7 +77,7 @@ class DataHandler:
         if subtokens:
             subtokens = subtokens[0]
             clean_string = subtokens[0]
-            tone =  subtokens[1]
+            tone = subtokens[1]
         return clean_string, tone
 
     def sinitic_tokenize(self, clean_string, merge_diacritics=False):
@@ -108,12 +114,12 @@ class DataHandler:
             daughter_sequences = {}
             if "chinese" in self._dataset_name:
                 mc_string, mc_tone = self._clean_middle_chinese_string(tkn_list[0])
-                mc_tkns = self.sinitic_tokenize(mc_string, merge_diacritics=False)
+                mc_tkns = self.sinitic_tokenize(mc_string, merge_diacritics=False) + [mc_tone]
                 for dialect, tkn in zip(langs[1:], tkn_list[1:]):
                     if not tkn or tkn == '-':
                         continue
                     daughter_string, daughter_tone = self._clean_sinitic_daughter_string(tkn)
-                    daughter_tkns = self.sinitic_tokenize(daughter_string, merge_diacritics=False)
+                    daughter_tkns = self.sinitic_tokenize(daughter_string, merge_diacritics=False) + [daughter_tone]
                     daughter_sequences[dialect] = daughter_tkns
                 entry['protoform'] = {
                     protolang: mc_tkns
