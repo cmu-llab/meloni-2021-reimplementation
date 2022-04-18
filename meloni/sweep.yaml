@@ -5,34 +5,32 @@ metric:
   name: best_dev_edit_distance
 parameters:
   batch_size:
-    max: 2
-    min: 1
-    distribution: int_uniform
+    value: 1
   network:
     value: gru
   dataset:
     value: chinese
   feedforward_dim:
-    max: 348
-    min: 50
+    max: 460
+    min: 32
     distribution: int_uniform
   embedding_size:
-    max: 334
-    min: 50
+    max: 588
+    min: 29
     distribution: int_uniform
   num_layers:
     value: 1
   model_size:
-    max: 112
-    min: 25
+    max: 218
+    min: 28
     distribution: int_uniform
   dropout:
-    max: 0.4
-    min: 0.2
+    max: 0.7547374074047681
+    min: 0.05
     distribution: uniform
   epochs:
-    max: 200
-    min: 75
+    max: 362
+    min: 5
     distribution: int_uniform
   beta2:
     value: 0.999
@@ -41,6 +39,6 @@ parameters:
   eps:
     value: 1.e-8
   lr:
-    max: 0.0008075736156256438
-    min: 0.00011061754826507515
+    max: 0.002
+    min: 0.00010802230080884912
     distribution: uniform
