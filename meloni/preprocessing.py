@@ -79,15 +79,15 @@ class DataHandler:
 
         ### TODO: middle chinese didn't connect affricates with '͡' --> will remove these tokens for now.
         # affricate - should always be merged
-        # while '͡' in tkns:
-        #     i = tkns.index('͡')
-        #     tkns = tkns[:i-1] + [''.join(tkns[i-1: i+2])] + tkns[i+2:]
+        while '͡' in tkns:
+            i = tkns.index('͡')
+            tkns = tkns[:i-1] + [''.join(tkns[i-1: i+2])] + tkns[i+2:]
 
         tkns = [tkn for tkn in tkns if tkn != '͡']
 
         # diacritics - optionally merge
         if merge_diacritics:
-            diacritics = {'ː', '̃', '̍', '̞', '̠', '̩'} # , 'ʰ', 'ʷ'}
+            diacritics = {'ː', '̃', '̍', '̞', '̠', '̩' , 'ʰ', 'ʷ'}
             while diacritics & set(tkns):
                 for i in range(len(tkns)):
                     if tkns[i] in diacritics:

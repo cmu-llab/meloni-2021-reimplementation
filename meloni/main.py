@@ -11,7 +11,7 @@ import wandb
 
 
 def get_edit_distance(s1, s2):
-    # TODO: remove the BOS/EOS from consideration
+    # TODO: remove the BOS/EOS from consideration - affects normalized edit distance
 
     if len(s1) > len(s2):
         s1, s2 = s2, s1
@@ -75,7 +75,7 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
         t = time.time()
 
         train_loss, train_accuracy = train_once(model, optimizer, loss_fn, train_data)
-        dev_loss, edit_distance, dev_accuracy, _ = evaluate(model, loss_fn, dev_data, DEVICE, MAX_LENGTH)
+        dev_loss, edit_distance, dev_accuracy, _ = evaluate(model, loss_fn, dev_data, DEVICE, MAX_LENGTH, vocab)
         wandb.log(
             {
                 "train_loss": train_loss,
