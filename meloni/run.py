@@ -13,12 +13,12 @@ def run(dataset, network, num_layers, model_size, lr, beta1, beta2, eps, embeddi
 num_layers = 1
 network = 'gru'
 model_size = 75
-lr = 0.001
+lr = 0.00001  # 0.0001 for Chinese
 beta1 = 0.9
 beta2 = 0.999
 eps = 1e-8
 embedding_size = 100
-dropout = 0.1
+dropout = 0.2
 epochs = 150
 dim_feedforward = 100
 batch_size = 1
