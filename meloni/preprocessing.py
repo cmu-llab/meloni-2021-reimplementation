@@ -6,6 +6,7 @@ import pickle
 import argparse
 from collections import Counter
 import torch
+import unicodedata
 
 
 random.seed(1234)
@@ -82,9 +83,15 @@ class DataHandler:
         return clean_string, tone
 
     def sinitic_tokenize(self, clean_string, merge_diacritics=False):
+        # for some reason, epitran is outputting in unicode composed form
+        clean_string = unicodedata.normalize('NFD', clean_string)
+
+        # swap order of nasalization and vowel length marker - i̯ːu
+        # the diphthong merger code assumes that the vowel length is marked before the semivowel
+        clean_string = clean_string.replace('̯̃', '̯̃')
+
         tkns = list(clean_string)
 
-        ### TODO: middle chinese didn't connect affricates with '͡' --> will remove these tokens for now.
         # affricate - should always be merged
         while '͡' in tkns:
             i = tkns.index('͡')
@@ -94,12 +101,49 @@ class DataHandler:
 
         # diacritics - optionally merge
         if merge_diacritics:
-            diacritics = {'ː', '̃', '̍', '̞', '̠', '̩' , 'ʰ', 'ʷ'}
-            while diacritics & set(tkns):
+            vowel_diacritics = {'ː', '̃', '̞', '̠', '̱'}
+            diacritics = vowel_diacritics | {'̍', '̩', 'ʰ', 'ʷ'}
+            # source: https://en.wikipedia.org/wiki/IPA_vowel_chart_with_audio
+            vowels = { 'i', 'y', 'ɨ', 'ʉ', 'ɯ', 'u', 'ɪ', 'ʏ', 'ʊ', 'e', 'ø', 'ɘ', 'ɵ', 'ɤ', 'o', 'ə', 'ɛ', 'œ', 'ɜ', 'ɞ', 'ʌ', 'ɔ', 'æ', 'ɐ', 'a', 'ɶ', 'ä', 'ɑ', 'ɒ' }
+            suprasegmentals = set()
+            for v in vowels:
+                for d in vowel_diacritics:
+                    suprasegmentals.add(v + d)
+            vowels |= suprasegmentals
+            mid_vowels = {'e̞', 'ø̞', 'ə', 'ɤ̞', 'o̞'}
+            vowels |= mid_vowels
+
+            # ensures there's no overlap between the two
+            # ensure there's no diacritic that's a standalone, unmerged token
+            while (set(diacritics) | set('̯')) & set(tkns):
                 for i in range(len(tkns)):
                     if tkns[i] in diacritics:
+                        # merge the previous, (i - 1)th, character with the diacritic
                         tkns = tkns[:i-1] + [''.join(tkns[i-1: i+1])] + tkns[i+1:]
                         break
+
+                    # breve indicates diphthong / triphthongs. merge the entire diphthong
+                    elif tkns[i] == '̯':
+                        # rule: if final vowel and has the breve, it's a diphthong. ex: ei̯
+                        if i >= 2 and tkns[i - 2] in vowels:
+                            assert tkns[i - 1] in vowels
+                            tkns = tkns[:i - 2] + [''.join(tkns[i - 2: i + 1])] + tkns[i + 1:]
+                            break
+
+                        # rule: if first vowel (no previous vowels) and has the breve, it's a diphthong. ex: i̯a
+                        #      at this point, lengthened vowels should have been merged already
+                        elif tkns[i - 1] in vowels:
+                            assert tkns[i + 1] in vowels
+                            # rule: if 2 breves exist, then it's a triphthong. ex: i̯oʊ̯
+                            if i + 1 < len(tkns) and '̯' in tkns[i + 1:]:
+                                end = (i + 1) + tkns[i + 1:].index('̯')
+                                # merge the whole thing
+                                tkns = tkns[:i - 1] + [''.join(tkns[i - 1: end + 1])] + tkns[end + 1:]
+                            else:
+                                # diphthong
+                                tkns = tkns[:i - 1] + [''.join(tkns[i - 1: i + 2])] + tkns[i + 2:]
+                            break
+
         return tkns
 
     def tokenize(self, string):
