@@ -51,26 +51,18 @@ class DataHandler:
         return langs, d
 
     def _clean_middle_chinese_string(self, clean_string):
-        subtokens = clean_string.split('/')
-        tone = None
-        if len(subtokens) > 1:
-            tone = subtokens[1]
-            tone = {
-                '¹': '平',
-                '²': '上',
-                '³': '去',
-                '⁴': '入'
-            }[tone]
-            return subtokens[0], tone
-        else:
-            # the tone is not separated by a / - tɕʰoŋʷ¹
-            return clean_string[:-1], {
-                '¹': '平',
-                '²': '上',
-                '³': '去',
-                '⁴': '入'
-            }[clean_string[-1]]
+        # assumes the string looks like kʰwen² - segments + tone in superscript
+        # if there are pronunciation variants, take the first one
+        if '/' in clean_string:
+            clean_string = clean_string.split('/')[0]
 
+        tone = {
+            '¹': '平',
+            '²': '上',
+            '³': '去',
+            '⁴': '入'
+        }[clean_string[-1]]
+        return clean_string[:-1], tone
 
     def _clean_sinitic_daughter_string(self, raw_string):
         # only keep first entry for multiple variants (polysemy, pronunciation variation, etc.)
