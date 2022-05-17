@@ -61,7 +61,16 @@ class DataHandler:
                 '³': '去',
                 '⁴': '入'
             }[tone]
-        return subtokens[0], tone
+            return subtokens[0], tone
+        else:
+            # the tone is not separated by a / - tɕʰoŋʷ¹
+            return clean_string[:-1], {
+                '¹': '平',
+                '²': '上',
+                '³': '去',
+                '⁴': '入'
+            }[clean_string[-1]]
+
 
     def _clean_sinitic_daughter_string(self, raw_string):
         # only keep first entry for multiple variants (polysemy, pronunciation variation, etc.)
@@ -72,7 +81,7 @@ class DataHandler:
         if '/' in raw_string:
             clean_string = raw_string.split('/')[0]
         # remove chinese characters
-        subtokens = re.findall('([^0-9]+)([0-9]+)([^0-9]*)', clean_string)
+        subtokens = re.findall('([^˩˨˧˦˥]+)([˩˨˧˦˥]+)', clean_string)
         tone = None
         if subtokens:
             subtokens = subtokens[0]
@@ -114,12 +123,15 @@ class DataHandler:
             daughter_sequences = {}
             if "chinese" in self._dataset_name:
                 mc_string, mc_tone = self._clean_middle_chinese_string(tkn_list[0])
-                mc_tkns = self.sinitic_tokenize(mc_string, merge_diacritics=False) + [mc_tone]
+                # we assume there is always a tone for the MC string
+                mc_tkns = self.sinitic_tokenize(mc_string, merge_diacritics=True) + [mc_tone]
                 for dialect, tkn in zip(langs[1:], tkn_list[1:]):
                     if not tkn or tkn == '-':
                         continue
                     daughter_string, daughter_tone = self._clean_sinitic_daughter_string(tkn)
-                    daughter_tkns = self.sinitic_tokenize(daughter_string, merge_diacritics=False) + [daughter_tone]
+                    daughter_tkns = self.sinitic_tokenize(daughter_string, merge_diacritics=True)
+                    if daughter_tone:
+                        daughter_tkns += [daughter_tone]
                     daughter_sequences[dialect] = daughter_tkns
                 entry['protoform'] = {
                     protolang: mc_tkns
