@@ -4,7 +4,7 @@ import sys
 import random
 import pickle
 import argparse
-from collections import defaultdict
+from collections import Counter
 import torch
 
 
@@ -38,16 +38,16 @@ class DataHandler:
         Assumes the first row contains the languages (daughter and proto-lang)
         Assumes the first column is the protoform (or characters in the case of Chinese)
 
-        Returns a dict mapping a protoform to the daughter forms
+        Returns a list of (protoform, daughter forms) tuples
         """
         with open(fpath) as fin:
             langs = fin.readline().strip().split('\t')
             if "chinese" in self._dataset_name:
                 langs = langs[1:]  # first column is character
-            d = {}
+            d = []
             for line in fin:
                 tkns = line.strip().split('\t')
-                d[tkns[0]] = tkns[1:]
+                d.append((tkns[0], tkns[1:]))
         return langs, d
 
     def _clean_middle_chinese_string(self, clean_string):
@@ -118,7 +118,8 @@ class DataHandler:
         langs, data = self._read_tsv(f'./data/{self._dataset_name}.tsv')
         protolang = langs[0]
         cognate_set = {}
-        for cognate, tkn_list in data.items():
+        cognate_counter = Counter()
+        for cognate, tkn_list in data:
             entry = {}
             daughter_sequences = {}
             if "chinese" in self._dataset_name:
@@ -137,6 +138,9 @@ class DataHandler:
                     protolang: mc_tkns
                 }
                 entry['daughters'] = daughter_sequences
+                # the same character could have cognate sets of pronunciation variants
+                cognate_counter[cognate] += 1
+                cognate = cognate + str(cognate_counter[cognate])
                 cognate_set[cognate] = entry
             else:
                 protolang_tkns = self.tokenize(cognate)
