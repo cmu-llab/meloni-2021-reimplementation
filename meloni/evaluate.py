@@ -1,6 +1,6 @@
 from main import *
 import torch
-import panphon
+import panphon.distance
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, required=True,
@@ -34,8 +34,8 @@ def get_metrics(model, loss_fn, dataset, device, max_length, vocab):
             prediction = model.decode(encoder_states, memory, embedded_x, max_length, device)
 
             # remove the BOS/EOS tokens to avoid deflating the normalized edit distance
-            assert vocab.to_string(prediction[0].item()) == '<' and vocab.to_string(target_tokens[0].item()) == '<'
-            assert vocab.to_string(prediction[-1].item()) == '>' and vocab.to_string(target_tokens[-1].item()) == '>'
+            assert vocab.to_string(torch.unsqueeze(prediction[0], dim=0)) == '<' and vocab.to_string(torch.unsqueeze(target_tokens[0], dim=0)) == '<'
+            assert vocab.to_string(torch.unsqueeze(prediction[-1], dim=0)) == '>' and vocab.to_string(torch.unsqueeze(target_tokens[-1], dim=0)) == '>'
             prediction = prediction[1:-1]
             target_tokens = target_tokens[1:-1]
 
@@ -56,7 +56,7 @@ def get_metrics(model, loss_fn, dataset, device, max_length, vocab):
             # keeping the prediction/target as a list preserves the phonemicization of the characters
             #   e.g. /th/ remains as one unit
             predicted_phonemes, gold_phonemes = vocab.to_string_list(prediction), vocab.to_string_list(target_tokens)
-            phoneme_edit_distance += get_edit_distance((predicted_phonemes, gold_phonemes))
+            phoneme_edit_distance += get_edit_distance(predicted_phonemes, gold_phonemes)
 
             total_target_char_len += len(protoform_str)
             total_target_phoneme_len += len(gold_phonemes)
@@ -77,7 +77,7 @@ def get_metrics(model, loss_fn, dataset, device, max_length, vocab):
 
     # normalize by # feats * # phonemes in longest sequence
     mean_feature_edit_distance = feature_edit_distance / len(dataset)
-    feature_error_rate = dist.get_feature_error_rate([pred for (pred, _) in predictions], [hyp for (_, hyp) in predictions])
+    feature_error_rate = dist.feature_error_rate([pred for (pred, _) in predictions], [hyp for (_, hyp) in predictions])
 
     return mean_loss, \
            mean_edit_distance, character_error_rate, \
