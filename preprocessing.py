@@ -199,12 +199,12 @@ class DataHandler:
         dataset['dev'] = proto_words[len(dataset['train']): int(len(proto_words) * (split_ratio[0] + split_ratio[1])/sum(split_ratio))]
         dataset['test'] = proto_words[len(dataset['train']) + len(dataset['dev']): ]
 
-        dataset_path = f'./data/{self._dataset_name}'
+        dataset_path = f'data/{self._dataset_name}'
         if not os.path.isdir(dataset_path):
             os.mkdir(dataset_path)
         for data_type in dataset:
             subdata = {protoword: cognate_set[protoword] for protoword in dataset[data_type]}
-            with open(f'./data/{self._dataset_name}/{data_type}.pickle', 'wb') as fout:
+            with open(f'data/{self._dataset_name}/{data_type}.pickle', 'wb') as fout:
                 pickle.dump((langs, subdata), fout)
 
     @classmethod
