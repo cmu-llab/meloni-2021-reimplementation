@@ -11,6 +11,9 @@ We find that dropout makes a significant difference when trained on a Chinese da
 
 # Running the code
 ```
+# install dependencies
+pip install -r requirements.txt
+
 # generate pickle files from the dataset
 python preprocessing.py --dataset chinese_wikihan2022.tsv
 
