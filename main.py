@@ -11,12 +11,13 @@ import wandb
 
 
 def get_edit_distance(s1, s2):
-    # TODO: remove the BOS/EOS from consideration - affects normalized edit distance
+    # source: https://github.com/shauli-ravfogel/Latin_reconstruction
+
+    # improvement: remove the BOS/EOS from consideration - affects normalized edit distance
 
     if len(s1) > len(s2):
         s1, s2 = s2, s1
     # len(s1) <= len(s2)
-    # TODO: understand
     distances = range(len(s1) + 1)
     for i2, c2 in enumerate(s2):
         distances_ = [i2 + 1]
@@ -39,10 +40,8 @@ def train_once(model, optimizer, loss_fn, train_data):
     total_train_loss = 0
     for cognate in order:
         source_tokens, source_langs, target_tokens, target_langs = train_data[cognate]
-        # TODO: check if i'm supposed to do this
         optimizer.zero_grad()
 
-        # TODO: do the to(device) thingy here
         logits = model(source_tokens, source_langs, target_tokens, target_langs, DEVICE)
         # logits should be (1, T, |Y|)
 
@@ -53,8 +52,6 @@ def train_once(model, optimizer, loss_fn, train_data):
         total_train_loss += loss.item()
 
         optimizer.step()
-
-        # TODO: check dimensions for everything!
 
         # compare indices instead of converting to string
         predicted = torch.argmax(logits, dim=1)
@@ -107,12 +104,10 @@ def train(epochs, model, optimizer, loss_fn, train_data, dev_data):
         mean_train_losses[epoch] = train_loss
         mean_dev_losses[epoch] = dev_loss
 
-    # TODO: be more specific in the naming
     if not os.path.isdir('losses'):
         os.mkdir('losses')
     if not os.path.isdir('losses/' + DATASET):
         os.mkdir('losses/' + DATASET)
-    # TODO: the dynet loss values differ from the RNN's
     np.save(f"losses/{DATASET}/train", mean_train_losses)
     np.save(f"losses/{DATASET}/dev", mean_dev_losses)
     record(best_loss_epoch, best_dev_loss, best_ed_epoch, best_dev_edit_distance)
@@ -167,7 +162,6 @@ def evaluate(model, loss_fn, dataset, device, max_length, vocab):
             #   instead of comparing against the protoform
             (encoder_states, memory), embedded_x = model.encode(source_tokens, source_langs, device)
             prediction = model.decode(encoder_states, memory, embedded_x, max_length, device)
-            # TODO: get the batching correct
             predict_str, protoform_str = \
                 vocab.to_string(prediction), vocab.to_string(target_tokens)
             edit_distance += get_edit_distance(predict_str, protoform_str)
@@ -183,10 +177,8 @@ def evaluate(model, loss_fn, dataset, device, max_length, vocab):
 
 
 def save_model(model, optimizer, args, epoch, filepath):
-    # TODO: is the model loading the parameters from the subclasses?
     save_info = {
         'model': model.state_dict(),
-        # TODO: save torch.nn.CrossEntropyLoss()
         'optim': optimizer.state_dict(),
         'args': args,
         'epoch': epoch,
@@ -204,7 +196,6 @@ def load_model(filepath):
 
 def write_preds(filepath, predictions):
     # predictions: predicted - original cognate
-    # TODO: should we try adding the original cognate set
     with open(filepath, 'w') as f:
         f.write("prediction\tgold standard\n")
         for pred, gold_std in predictions:
@@ -218,10 +209,10 @@ if __name__ == '__main__':
     torch.manual_seed(0)
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, required=True,
-                        help='chinese/romance_orthographic/romance_phonetic/austronesian')
-    parser.add_argument('--network', type=str, required=True, help='lstm/gru')
+                        help='chinese_wikihan2022/chinese_hou2004')
+    parser.add_argument('--network', type=str, required=True, help='gru is currently the only option')
     parser.add_argument('--num_layers', type=int, required=True, help='number of RNN layers')
-    parser.add_argument('--model_size', type=int, required=True, help='lstm hidden layer size')
+    parser.add_argument('--model_size', type=int, required=True, help='RNN hidden layer size')
     parser.add_argument('--lr', type=float, required=True, help='learning rate')
     parser.add_argument('--beta1', type=float, required=True, help='beta1')
     parser.add_argument('--beta2', type=float, required=True, help='beta2')
@@ -230,8 +221,7 @@ if __name__ == '__main__':
     parser.add_argument('--feedforward_dim', type=int, required=True, help='dimension of the final MLP')
     parser.add_argument('--dropout', type=float, required=True, help='dropout value')
     parser.add_argument('--epochs', type=int, required=True)
-    # TODO: batching
-    parser.add_argument('--batch_size', type=int, required=True, help='batch_size')
+    parser.add_argument('--batch_size', type=int, required=True, help='only 1 is supported at the moment')
     args = parser.parse_args()
 
     wandb.init(config=args)
@@ -261,7 +251,6 @@ if __name__ == '__main__':
     dev_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/dev.pickle')
     # special tokens in the separator embedding's vocabulary
     langs = langs + ['sep']
-    # TODO: create a special vocab just for the separator embeddings
     phoneme_vocab.add("<")
     phoneme_vocab.add(":")
     phoneme_vocab.add("*")

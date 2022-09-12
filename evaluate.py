@@ -4,7 +4,7 @@ import panphon.distance
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, required=True,
-                    help='chinese/romance_orthographic/romance_phonetic/austronesian')
+                    help='chinese_wikihan2022/chinese_hou2004')
 args = parser.parse_args()
 DATASET = args.dataset
 MODELPATH_LOSS = f'./checkpoints/{DATASET}_best_loss.pt'
@@ -39,7 +39,6 @@ def get_metrics(model, loss_fn, dataset, device, max_length, vocab):
             prediction = prediction[1:-1]
             target_tokens = target_tokens[1:-1]
 
-            # TODO: get the batching correct
             predict_str, protoform_str = \
                 vocab.to_string(prediction), vocab.to_string(target_tokens)
 
@@ -92,7 +91,6 @@ for filepath, criterion in [(MODELPATH_LOSS, 'loss'), (MODELPATH_ED, 'edit dista
     args = saved_info['args']
     vocab = saved_info['vocab']
 
-    # TODO: have all parameters been loaded?
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     NUM_EPOCHS = args.epochs
     NUM_LAYERS = args.num_layers

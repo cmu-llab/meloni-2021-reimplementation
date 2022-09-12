@@ -9,8 +9,9 @@ import torch
 import unicodedata
 
 
-random.seed(1234)
-
+"""
+By Youngmin Kim and Kalvin Chang
+"""
 
 class DataHandler:
     """
@@ -250,10 +251,7 @@ class DataHandler:
                 target_tokens.append(C2I[char if char in C2I else "<unk>"])
                 target_langs.append(L2I[lang])
 
-            # print([I2C[idx] for idx in target_tokens])
-            # print([(langs + ['sep'])[idx] for idx in target_langs])
-
-            # TODO: don't do the to(device) here - move out to main.py
+            # improvement: don't do the to(device) here - move out to main.py
             target_tokens = torch.tensor(target_tokens).to(device)
             target_langs = torch.tensor(target_langs).to(device)
 
