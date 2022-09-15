@@ -301,8 +301,10 @@ class DataHandler:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, required=True, help='chinese/romance_orthographic/romance_phonetic/austronesian')
+    parser.add_argument('--dataset', type=str, required=True, help='chinese_hou2004/chinese_wikihan2022')
+    parser.add_argument('--seed', type=int, help='seed value')
     args = parser.parse_args()
+    random.seed(args.seed)
 
     d = DataHandler(args.dataset)
     d.generate_split_datasets()
