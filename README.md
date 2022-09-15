@@ -15,8 +15,14 @@ Note: A significant portion of the content on this page is reproduced from Chang
 # install dependencies
 pip install -r requirements.txt
 
-# generate pickle files from the dataset
-python preprocessing.py --dataset chinese_wikihan2022.tsv
+# log into wandb if you would like to use wandb to track the model's performance as it trains
+wandb login
+# or disable wandb if you would not like to use it
+wandb disabled
+
+# generate pickle files from the dataset - we used 12345 as our seed
+# use the same seed as us if you would like to use the same train/test split
+python preprocessing.py --dataset chinese_wikihan2022.tsv --seed 12345
 
 # run the model
 python main.py --batch_size=1 --beta1=0.9 --beta2=0.999 --dataset=chinese_wikihan2022 --dropout=0.2769919925175171 --embedding_size=489 --epochs=80 --eps=1e-08 --feedforward_dim=431 --lr=0.00012204821435543166 --model_size=28 --network=gru --num_layers=1
@@ -31,11 +37,11 @@ See Chang et al 2022 for an explanation of why we chose these evaluation criteri
 
 | Evaluation criterion     | Explanation                                                                                                                                                                                                                                                                                                                                                                                                             | Value  |
 |--------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------|
-| Accuracy                 | Percentage of protoforms on which the model matches the target exactly                                                                                                                                                                                                                                                                                                                                                  | 50.92% |
-| Phoneme error rate (PER) | Cumulative number of phoneme edits between the hypothesis and the reference normalized by the total length of the reference (in phonemes)                                                                                                                                                                                                                                                                               | 18.05% |
-| Feature error rate (FER) | FER measures the ["severity"](https://arxiv.org/pdf/2107.11628.pdf) of phoneme errors by the model and is calculated using the cumulative edit distance in terms of articulatory phonetic features from [PanPhon](https://github.com/dmort27/panphon), calculated between the hypothesis and the reference, normalized by the total length of the reference in phonemes multiplied by the number of features per phoneme. | 6.78%  |
-| Edit distance            | Levenshtein distance between the hypothesis and the target, where the distance is calculated on characters                                                                                                                                                                                                                                                                                                              | 0.870 |
-| Character error rate (CER) | Edit distance divided by the length of the hypothesis                                                                                                                                                                                                                                                                                                                                                                   | 18.20% |
+| Accuracy                 | Percentage of protoforms on which the model matches the target exactly                                                                                                                                                                                                                                                                                                                                                  | 54.11% |
+| Phoneme error rate (PER) | Cumulative number of phoneme edits between the hypothesis and the reference normalized by the total length of the reference (in phonemes)                                                                                                                                                                                                                                                                               | 17.69% |
+| Feature error rate (FER) | FER measures the ["severity"](https://arxiv.org/pdf/2107.11628.pdf) of phoneme errors by the model and is calculated using the cumulative edit distance in terms of articulatory phonetic features from [PanPhon](https://github.com/dmort27/panphon), calculated between the hypothesis and the reference, normalized by the total length of the reference in phonemes multiplied by the number of features per phoneme. | 6.60%  |
+| Edit distance            | Levenshtein distance between the hypothesis and the target, where the distance is calculated on characters                                                                                                                                                                                                                                                                                                              | 0.868  |
+| Character error rate (CER) | Edit distance divided by the length of the hypothesis                                                                                                                                                                                                                                                                                                                                                                   | 18.03% |
 
 We do not report edit distance in the paper because it should not be used to compare across language families (where average word lengths are inherently different) and because we would like to encourage the use of more phonologically grounded evaluation metrics. 
 
