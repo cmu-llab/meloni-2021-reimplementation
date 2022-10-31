@@ -190,7 +190,7 @@ def save_model(model, optimizer, args, epoch, filepath):
 
 
 def load_model(filepath):
-    saved_info = torch.load(filepath)
+    saved_info = torch.load(filepath, map_location='cpu')
     return saved_info
 
 
@@ -206,7 +206,6 @@ def write_preds(filepath, predictions):
 
 
 if __name__ == '__main__':
-    torch.manual_seed(0)
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, required=True,
                         help='chinese_wikihan2022/chinese_hou2004')
@@ -222,9 +221,14 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', type=float, required=True, help='dropout value')
     parser.add_argument('--epochs', type=int, required=True)
     parser.add_argument('--batch_size', type=int, required=True, help='only 1 is supported at the moment')
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--wandb_name', type=str, default='')
     args = parser.parse_args()
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
 
-    wandb.init(config=args)
+
+    wandb.init(project="meloni-2021-reimplementation", name=args.wandb_name, entity='cuichenx', config=args)
     config = wandb.config
 
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -247,8 +251,8 @@ if __name__ == '__main__':
     HIDDEN_SIZE = config["model_size"]  # args.model_size
     FEEDFORWARD_DIM = config["feedforward_dim"]  # args.feedforward_dim
 
-    train_dataset, phoneme_vocab, langs = DataHandler.load_dataset(f'./data/{DATASET}/train.pickle')
-    dev_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/dev.pickle')
+    train_dataset, phoneme_vocab, langs = DataHandler.load_dataset(f'./data/{DATASET.split("-")[0]}/train.pickle')
+    dev_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET.split("-")[0]}/dev.pickle')
     # special tokens in the separator embedding's vocabulary
     langs = langs + ['sep']
     phoneme_vocab.add("<")

@@ -105,8 +105,8 @@ for filepath, criterion in [(MODELPATH_LOSS, 'loss'), (MODELPATH_ED, 'edit dista
     HIDDEN_SIZE = args.model_size
     FEEDFORWARD_DIM = args.feedforward_dim
 
-    dev_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET}/dev.pickle')
-    test_dataset, _, langs = DataHandler.load_dataset(f'./data/{DATASET}/test.pickle')
+    dev_dataset, _, _ = DataHandler.load_dataset(f'./data/{DATASET.split("-")[0]}/dev.pickle')
+    test_dataset, _, langs = DataHandler.load_dataset(f'./data/{DATASET.split("-")[0]}/test.pickle')
     langs = langs + ['sep']
     L2I = {l: idx for idx, l in enumerate(langs)}
     dev_tensors = DataHandler.get_cognateset_batch(dev_dataset, langs, vocab, L2I, DEVICE)
