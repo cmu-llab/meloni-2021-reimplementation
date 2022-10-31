@@ -199,9 +199,9 @@ def write_preds(filepath, predictions):
     with open(filepath, 'w') as f:
         f.write("prediction\tgold standard\n")
         for pred, gold_std in predictions:
-            # remove BOS and EOS
-            pred = pred[1:-1]
-            gold_std = gold_std[1:-1]
+            # remove BOS and EOS (these are already removed)
+            # pred = pred[1:-1]
+            # gold_std = gold_std[1:-1]
             f.write(f"{pred}\t{gold_std}\n")
 
 
